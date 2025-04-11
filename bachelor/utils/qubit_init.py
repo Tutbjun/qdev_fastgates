@@ -7,13 +7,20 @@ from numpy import cos,sin
 from tqdm import tqdm
 import sympy as sp
 from copy import copy
+import matplotlib._pylab_helpers as pylab_helpers
+def is_figure_active():
+    return len(pylab_helpers.Gcf.figs) > 0
 from time import time
 from IPython.display import display as display_
 from IPython.display import Math
 import qutip as qt
 import scipy as scpy
 
-
+config = {}
+with open("config.txt", "r") as f:
+    for line in f.readlines():
+        line = line.strip()
+        config[line.split(":")[0]] = eval(line.split(":")[1])
 
 H0 = 0
 n_opp = 0
@@ -238,19 +245,42 @@ def solveEi(hamiltonian, truncation,meta=""):
     f1,f2 = f"temp/eigvecs_{meta}.npy", f"temp/eigvals_{meta}.npy"
     if f1.split("/")[1] in os.listdir("temp") and f2.split("/")[1] in os.listdir("temp"):
         print("Found cached eigvals, loading...")
-        eigvecs, eigvals = np.load(f1), np.load(f2)
-        if len(eigvecs[:,0]) == len(hamiltonian):
-            basisTransform  = np.zeros((len(eigvecs),len(eigvecs)),dtype=np.complex128)
-            for i in range(len(eigvecs[0])):
-                basisTransform[:,i] = eigvecs[:,i]
-            return eigvals, eigvecs, basisTransform
-    hamiltonian = scpy.sparse.csr_matrix(hamiltonian)
-    eigvals, eigvecs = scpy.sparse.linalg.eigsh(hamiltonian,which='SA',k=truncation)
-    basisTransform = np.zeros((len(eigvecs),len(eigvecs)),dtype=np.complex128)
+        loading_success = True
+        eigvecs, eigvals = [],[]
+        try:
+            eigvecs, eigvals = np.load(f1), np.load(f2)
+        except:
+            loading_success = False
+        if len(eigvecs) != truncation:
+            loading_success = False
+        if loading_success:
+            if len(eigvecs[:,0]) == len(hamiltonian):
+                """basisTransform  = np.zeros((len(eigvecs),len(eigvecs)),dtype=np.complex128)
+                for i in range(len(eigvecs[0])):
+                    basisTransform[:,i] = eigvecs[:,i]"""
+                basisTransform = eigvecs
+                return eigvals, eigvecs, basisTransform
+        else:
+            print("Loading failed, recomputing eigvals")
+    #hamiltonian = scpy.sparse.csr_matrix(hamiltonian)
+    #eigvals, eigvecs = scpy.sparse.linalg.eigsh(hamiltonian,which='SA',k=truncation)
+    #do with numpy instead
+    eigvals, eigvecs = np.linalg.eigh(hamiltonian)
+    print(eigvals)
+    print(eigvecs)
+    """basisTransform = np.zeros((len(eigvecs),len(eigvecs)),dtype=np.complex128)
     for i in range(len(eigvecs[0])):
-        basisTransform[:,i] = eigvecs[:,i]
+        basisTransform[:,i] = eigvecs[:,i]"""
+    basisTransform = eigvecs
     mask = np.sum(eigvecs.real, axis=0) < 0
     eigvecs[:, mask] *= -1
+    #check all the phases
+    for i in range(len(eigvecs[0])):
+        for x in eigvecs[:,i]:
+            if not np.isclose(np.abs(x),0):
+                phase = x/np.abs(x)
+                eigvecs[:,i] /= phase
+                break
     np.save(f1, eigvecs)
     np.save(f2  , eigvals)
     return eigvals, eigvecs, basisTransform
@@ -304,8 +334,9 @@ def get_diag_Hamiltonian(Ec,El,Ej,phi_dc, base_ex=np.pi*4, base_size=500,expansi
     
 
 from matplotlib import pyplot as plt
+from matplotlib import colors
 
-def init_qubit(Ec,El,Ej,phi_dc,c_ops,t_g, base_ex=np.pi*2, base_size=1001,expansion_order=50, truncation=5):
+def init_qubit(Ec,El,Ej,phi_dc,c_ops,t_g, base_ex=np.pi*4, base_size=1001,expansion_order=50, truncation=20):
     global H0
     global n_opp
     global phi_opp
@@ -323,41 +354,76 @@ def init_qubit(Ec,El,Ej,phi_dc,c_ops,t_g, base_ex=np.pi*2, base_size=1001,expans
     H0_diag = np.diag([eigenvals[i] for i in range(truncation)])-eigenvals[0]*np.eye(truncation)
     n = get_n_op(base_size,base_ex)
     phi = get_nphi_op(base_size,base_ex)
-    fig,ax = plt.subplots(2,2)
-    ax[0,0].imshow(n.real[:10,:10])
-    ax[0,1].imshow(n.imag[:10,:10])
-    ax[1,0].imshow(phi.real[:10,:10])
-    ax[1,1].imshow(phi.imag[:10,:10])
-    plt.savefig("n_phi.png")
-    plt.show()
-    plt.clf()
+    if config["melems"]:# and not is_figure_active():
+        cmap = plt.get_cmap('seismic')
+        print("Plotting n and phi")
+        fig,ax = plt.subplots(2,2)
+        extremum = np.max(np.abs(n))
+        ax[0,0].imshow(n.real[:10,:10], vmin=-extremum, vmax=extremum, cmap=cmap)
+        ax[0,1].imshow(n.imag[:10,:10], vmin=-extremum, vmax=extremum, cmap=cmap)
+        extremum = np.max(np.abs(phi))
+        ax[1,0].imshow(phi.real[:10,:10], vmin=-extremum, vmax=extremum, cmap=cmap)
+        ax[1,1].imshow(phi.imag[:10,:10], vmin=-extremum, vmax=extremum, cmap=cmap)
+        plt.savefig("n_phi_init.png")
+        plt.show()
+        plt.clf()
+        plt.close('all')
     
     #print(n-n.T.conj())
     n = np.dot(np.dot(basisTransform.T.conj(), n), basisTransform)
     #print(n-n.T.conj())
     phi = np.dot(np.dot(basisTransform.T.conj(), phi), basisTransform)
-    #plot
-    fig,ax = plt.subplots(2,2)
-    ax[0,0].imshow(n.real[:10,:10])
-    ax[0,1].imshow(n.imag[:10,:10])
-    ax[1,0].imshow(phi.real[:10,:10])
-    ax[1,1].imshow(phi.imag[:10,:10])
-    plt.savefig("n_phi.png")
-    plt.show()
-    plt.clf()
-
-
-    #truncate
-    H0_diag = H0_diag[:truncation,:truncation]
-    n = n[:truncation,:truncation]
-    phi = phi[:truncation,:truncation]
-    eigenvecs = eigenvecs[:,:truncation]
-    basisTransform = basisTransform[:,:truncation]
-    eigenvals = eigenvals[:truncation]
 
     H0 = H0_diag
     n_opp = n
     phi_opp = phi
+
+    #normalize the operators
+    n_opp = n_opp/np.abs(n_opp[0][1])
+    if n_opp[0][1].imag > 0:
+        n_opp *= -1
+    phi_opp = phi_opp/np.abs(phi_opp[0][1])
+    if phi_opp[0][1].real < 0:
+        phi_opp *= -1
+
+    #truncate
+    H0 = H0[:truncation,:truncation]
+    n_opp = n_opp[:truncation,:truncation]
+    phi_opp = phi_opp[:truncation,:truncation]
+    eigenvecs = eigenvecs[:,:truncation]
+    basisTransform = basisTransform[:,:truncation]
+    eigenvals = eigenvals[:truncation]
+
+    
+    
+    #plot
+    if config["melems"]:# and not is_figure_active():
+        print("Plotting n and phi")
+        fig,ax = plt.subplots(2,2)
+        cmap = plt.get_cmap('seismic')
+        extremum = np.max([np.max(np.abs(n_opp)),np.max(np.abs(phi_opp))])  
+        ax[0,0].imshow(n_opp.real[:10,:10], cmap=cmap, norm=colors.SymLogNorm(10**1,vmin=-extremum, vmax=extremum))
+        print(n_opp.real[:10,:10])
+        ax[0,0].set_ylabel("n")
+        r = ax[0,1].imshow(n_opp.imag[:10,:10], cmap=cmap, norm=colors.SymLogNorm(10**1,vmin=-extremum, vmax=extremum))
+        print(n_opp.imag[:10,:10])
+        ax[1,0].imshow(phi_opp.real[:10,:10], cmap=cmap, norm=colors.SymLogNorm(10**1,vmin=-extremum, vmax=extremum))
+        print(phi_opp.real[:10,:10])
+        ax[1,0].set_ylabel("phi")
+        ax[1,0].set_xlabel("real")
+        ax[1,1].imshow(phi_opp.imag[:10,:10], cmap=cmap, norm=colors.SymLogNorm(10**1,vmin=-extremum, vmax=extremum))
+        print(phi_opp.imag[:10,:10])
+        ax[1,1].set_xlabel("imaginary")
+        #show cbar
+        cbar = plt.colorbar(r, ax=ax[0,1], orientation='vertical')
+        plt.savefig("n_phi.png")
+        plt.show()
+        plt.clf()
+        plt.close('all')
+
+
+    
+    
 
     #save
     current_time = int(time())

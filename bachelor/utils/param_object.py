@@ -36,14 +36,17 @@ class GateParams:
                 print(f"Warning: {key} is not a function")"""
         
         #check if there is anything to calibrate:
+        self.VZ_amp = 0
         self.is_calibrated = {}
         keys = list(self.__dict__.keys())
         for key in keys:
             if key.startswith("calibrate_"):
-                if "_Z" in key:
+                if "_VZ" in key:
                     if self.__dict__[key] == True:
-                        self.Z_amp = 0
-                        self.is_calibrated["Z"] = False
+                        self.VZ_amp = 0
+                        self.VZ_amp_buffer = []
+                        self.VZ = [[1,0],[0,1]]
+                        self.is_calibrated["VZ"] = False
                 elif "_Omega" in key:
                     if self.__dict__[key] == True:
                         self.Omega_amp = 1
@@ -74,6 +77,7 @@ class GateParams:
         self.H0 = qt.Qobj(self.H0)
 
         self.polarization = np.array(self.polarization).astype(np.complex128)
+        print(self.polarization)
         #carrier = lambda t: np.exp(-1j*self.omega_d*t)*self.polarization
         #self.function = lambda t: np.sum([(self.envelope(t)*carrier(t))[i]*np.array([self.n_opp, self.phi_opp])[i] for i in range(2)], axis=0)
 
@@ -89,13 +93,15 @@ class GateParams:
             self.function = lambda t: self.envelope(t)*carrier(t)*scaling
         #print(self.n_opp-self.n_opp.T.conj())
         #print(self.phi_opp-self.phi_opp.T.conj())
-        self.matrixelem_n = qt.Qobj(self.n_opp*self.polarization[0])
-        self.matrixelem_phi = qt.Qobj(self.phi_opp*self.polarization[1])
+        #self.matrixelem_n = qt.Qobj(self.n_opp)#*self.polarization[1])
+        #matrixelem_phi = qt.Qobj(self.phi_opp)#*self.polarization[0])
+        #print(self.matrixelem_n.full())
+        #print(matrixelem_phi.full())
         
         return self
     
 
-    def transform_2_rotating_frame(self,t0,omega_01):#!doublecheck this one (does give non-unitary matrix)
+    def transform_2_rotating_frame(self,t0,t_g,omega_01):#!doublecheck this one (does give non-unitary matrix)
         global config
         #self.H0 = 0.5*(self.H0 + self.H0.dag())#!temp
         #self.matrixelem = 0.5*(self.matrixelem + self.matrixelem.dag())#!temp
@@ -134,8 +140,12 @@ class GateParams:
         if not self.known_t0:
             ts = sp.symbols('t')
             t0s = sp.Symbol('t_0')
+            t_gs = sp.Symbol('t_g')
+            omega_01s = sp.Symbol('omega_{01}')
             func = self.function
             func = func.subs(t0s, t0)
+            func = func.subs(t_gs, t_g)
+            func = func.subs(omega_01s, omega_01)
             #func = self.function.subs({self.t_0: t0})
             #convert to numpy piecewise
             func = sp.lambdify(ts, func, modules=["numpy"])
@@ -149,16 +159,32 @@ class GateParams:
         #plt.plot(np.linspace(0, 5, 100), [func1(t).full()[0][1] for t in np.linspace(0, 5, 100)])
         #plt.savefig("temp/envelope.png")
         #plt.clf()
-        func2 = lambda t: (unitary(t)*self.matrixelem_phi*i_unitary(t)*self.funcbuffer[-1](t))
+        func2 = lambda t: (unitary(t)*matrixelem_phi*i_unitary(t)*self.funcbuffer[-1](t))
+        T = np.linspace(0, 20, 100)
+        r = [func1(t).full()[0][1].real for t in T]
+        i = [func1(t).full()[0][1].imag for t in T]
+        plt.plot(T, r)
+        plt.plot(T, i)
+        plt.savefig("temp/envelope.png")
+        plt.clf()
+        plt.close('all')
+        T = np.linspace(0, 20, 100)
+        r = [func2(t).full()[0][1].real for t in T]
+        i = [func2(t).full()[0][1].imag for t in T]
+        plt.plot(T, r)
+        plt.plot(T, i)
+        plt.savefig("temp/envelope.png")
+        plt.clf()
+        plt.close('all')
         #plt.plot(np.linspace(0, 5, 100), [func2(t).full()[0][1] for t in np.linspace(0, 5, 100)])
         #plt.savefig("temp/envelope.png")
         #plt.clf()
-        self.function_HI = lambda t: 0.5*(func1(t)+func1(t).dag()) + 0.5*(func2(t)+func2(t).dag())# + time_part
+        self.function_HI = lambda t: 0.5*(func1(t)+func1(t).conj()) + 0.5*(func2(t)+func2(t).conj())# + time_part
         #plt.plot(np.linspace(0, 5, 100), [self.function_HI(t).full()[0][1] for t in np.linspace(0, 5, 100)])
         #plt.savefig("temp/envelope.png")
         #plt.clf()
-        #print(self.function_HI_t(0).full()-self.function_HI_t(0).full().T.conj())
-        #print(self.function_HI_t(5).full()-self.function_HI_t(5).full().T.conj())
+        #print(self.function_HI(0).full()-self.function_HI(0).full().T.conj())
+        #print(self.function_HI(5).full()-self.function_HI(5).full().T.conj())
         
         #self.function_HI = lambda t: 0.5*(self.function_HI_t(t)+self.function_HI_t(t).dag())#symmetrize#!temp
         #print(self.function_HI(0).full()-self.function_HI(0).full().T.conj())
@@ -174,13 +200,113 @@ class GateParams:
             return mat
         self.function_H = lambda t: H(t)
         #self.function_H = lambda t: self.H0_evol(t)+self.function_HI(t)#one could argue that the code would be optimizable by seperating function and matrix, but I would argue (or prove): this is not possible for general hammiltonians
-        
+        #make plot of |0><1| on H
+        T = np.linspace(0, 20, 100)
+        r = [self.H0_evol(t).full()[0][1].real for t in T]
+        i = [self.H0_evol(t).full()[0][1].imag for t in T]
+        plt.plot(T, r)
+        plt.plot(T, i)
+        plt.savefig("temp/envelope.png")
+        plt.clf()
+        plt.close('all')
+        T = np.linspace(0, 20, 100)
+        r = [self.function_HI(t).full()[0][1].real for t in T]
+        i = [self.function_HI(t).full()[0][1].imag for t in T]
+        plt.plot(T, r)
+        plt.plot(T, i)
+        plt.savefig("temp/envelope.png")
+        plt.clf()
+        plt.close('all')
     
         #print(self.function_H(0).full()-self.function_H(0).full().T.conj())
         #print(self.function_H(5).full()-self.function_H(5).full().T.conj())
+        print(self.function_H(0).full())
+        print(self.function_H(5).full())
         
         return self.H0_bare, qt.QobjEvo(self.function_H)
 
+    def transform_2_rotating_frame(self,t0,t_g,omega_01):
+        #attempt 2, this time simpler
+        me_11 = np.zeros((len(self.H0.full()),len(self.H0.full())),dtype=np.complex128)
+        me_00 = np.zeros((len(self.H0.full()),len(self.H0.full())),dtype=np.complex128)
+        me_I = np.eye(len(self.H0.full()))
+        me_00[0,0], me_11[1,1] = 1, 1
+        me_00, me_11, me_I = qt.Qobj(me_00), qt.Qobj(me_11), qt.Qobj(me_I)
+        unitary = lambda t: (np.exp(1j*omega_01*t)-1)*me_11 + me_I
+        i_unitary = lambda t: (np.exp(-1j*omega_01*t)-1)*me_11 + me_I
+
+        #then construct the H0 and HI
+        if not hasattr(self, 'funcbuffer'):
+            self.funcbuffer = []
+        if not self.known_t0:
+            ts = sp.symbols('t')
+            t0s = sp.Symbol('t_0')
+            t_gs = sp.Symbol('t_g')
+            omega_01s = sp.Symbol('omega_{01}')
+            func = self.function
+            func = func.subs(t0s, t0)
+            func = func.subs(t_gs, t_g)
+            func = func.subs(omega_01s, omega_01)
+            #func = self.function.subs({self.t_0: t0})
+            #convert to numpy piecewise
+            func = sp.lambdify(ts, func, modules=["numpy"])
+        else:
+            func = self.function
+        matrixelem_n = qt.Qobj(self.n_opp)
+        matrixelem_phi = qt.Qobj(self.phi_opp)
+        #print(matrixelem_n.full())
+        #print(matrixelem_phi.full())
+        #matrixelem_n = 0.5*(matrixelem_n + matrixelem_n.dag())#!temp
+        #matrixelem_phi = 0.5*(matrixelem_phi + matrixelem_phi.dag())#!temp
+        #normalize
+        #matrixelem_n = matrixelem_n/np.abs(matrixelem_n[0][1])
+        #matrixelem_phi = matrixelem_phi/np.abs(matrixelem_phi[0][1])
+        func1_t = lambda t: np.real(func(t)*self.polarization[1])
+        func2_t = lambda t: np.real(func(t)*self.polarization[0])
+        plt.plot(np.linspace(0, 5, 100), [func1_t(t) for t in np.linspace(0, 5, 100)])
+        plt.plot(np.linspace(0, 5, 100), [func2_t(t) for t in np.linspace(0, 5, 100)])
+        plt.savefig("temp/envelope.png")
+        plt.clf()
+        plt.close('all')
+        func1 = lambda t: matrixelem_n*func1_t(t)
+        func2 = lambda t: matrixelem_phi*func2_t(t)
+        #print(matrixelem_n.full())#! not unitary
+        #print(matrixelem_phi.full())
+        #print(self.H0.full())
+
+        H_evol = lambda t: self.H0 + func1(t) + func2(t)
+        #plot this
+        T = np.linspace(0, 20, 100)
+        r = [H_evol(t).full()[0][1].real for t in T]
+        i = [H_evol(t).full()[0][1].imag for t in T]
+        r2 = [H_evol(t).full()[1][0].real for t in T]
+        i2 = [H_evol(t).full()[1][0].imag for t in T]
+        plt.plot(T, r)
+        plt.plot(T, i)
+        plt.plot(T, r2)
+        plt.plot(T, i2)
+        plt.savefig("temp/envelope.png")
+        plt.clf()
+        plt.close('all')
+
+
+        #then, finally, do the transformation
+        time_part = -omega_01*me_11
+        H_transformed = lambda t: unitary(t)*H_evol(t)*i_unitary(t) + time_part
+        T = np.linspace(0, 20, 100)
+        r = [H_transformed(t).full()[0][1].real for t in T]
+        i = [H_transformed(t).full()[0][1].imag for t in T]
+        r2 = [H_transformed(t).full()[1][0].real for t in T]
+        i2 = [H_transformed(t).full()[1][0].imag for t in T]
+        plt.plot(T, r)
+        plt.plot(T, i)
+        plt.plot(T, r2)
+        plt.plot(T, i2)
+        plt.savefig("temp/envelope.png")
+        plt.clf()
+        plt.close('all')
+
+        return self.H0_bare, qt.QobjEvo(H_transformed)
     
     
     def get_QuTiP_compile(self):

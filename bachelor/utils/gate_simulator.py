@@ -3,6 +3,7 @@
 
 import qutip as qt
 import numpy as np
+import matplotlib.pyplot as plt
 
 
 
@@ -30,9 +31,21 @@ def init_sim(H0, H,c_ops, n_opp,phi_opp, initial_state="even"):
     else:
         raise NotImplementedError
     omega_01 = H0[1,1]-H0[0,0]
+    #print(H(0).full())
+    #print(H(5).full())
+    #make plot of |0><1| on H
+    """T = np.linspace(0, 20, 100)
+    r = [H(t).full()[0][1].real for t in T]
+    i = [H(t).full()[0][1].imag for t in T]
+    plt.plot(T, r)
+    plt.plot(T, i)
+    plt.savefig("temp/envelope.png")
+    plt.clf()
+    plt.close('all')"""
+
     tau = 1/omega_01
     tau_r = np.real(tau)
-    print(f"tau-tau_r error: {tau-tau_r}")
+    #print(f"tau-tau_r error: {tau-tau_r}")
     tau = tau_r
     """if initial_time == "random":
         t0s = [np.random.rand()*tau]
@@ -46,7 +59,7 @@ def init_sim(H0, H,c_ops, n_opp,phi_opp, initial_state="even"):
     solvers = []
     for i in range(len(start_states)):
             
-        solvers.append(qt.MESolver(H,c_ops=c_ops, options={'store_final_state':True, 'progress_bar': "tqdm", "method": "bdf", "max_step": 0.5}))
+        solvers.append(qt.MESolver(H,c_ops=c_ops, options={'store_final_state':True, 'progress_bar': "tqdm", "method": "bdf", "max_step": 0.5}))#, "min_step": tau/100}))
         #print(H(0).full()-H(0).full().T.conj())
         #solvers.append(qt.MESolver(H, c_ops=[], options={'nsteps':10
                                     #args for run:
@@ -63,7 +76,7 @@ def simulate(t0,t_length):
     i = 0
     for j in range(len(start_states)):
         #print(start_states[j].full())
-        result = solvers[i].run(start_states[j], np.linspace(t0,t_length,1000))
+        result = solvers[i].run(start_states[j], np.linspace(t0,t_length,500))
         """process = multiprocessing.Process(target=solvers[i].run, args=(start_states[j], np.linspace(t0,t_length+t0,1000), [], []))
         process.start()
         process.join(timeout=timeout)
