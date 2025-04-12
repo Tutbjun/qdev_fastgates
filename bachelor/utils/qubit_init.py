@@ -321,6 +321,11 @@ def get_diag_Hamiltonian(Ec,El,Ej,phi_dc, base_ex=np.pi*4, base_size=500,expansi
     plt.ylim(eigvals[0]-5,eigvals[4]+10)
     #plt.xlim(-np.pi,np.pi)
     plt.savefig("eigenvecs.png")
+    fold = os.listdir("temp/eigenvecs")
+    values = [int(f.split("_")[-1].split(".")[0]) for f in fold]
+    if len(values) == 0: value = 0
+    else: value = np.max(values)+1
+    plt.savefig(f"temp/eigenvecs/eigenvecs_{value}.png")
     plt.show()
     plt.clf()
 
@@ -401,17 +406,19 @@ def init_qubit(Ec,El,Ej,phi_dc,c_ops,t_g, base_ex=np.pi*4, base_size=1001,expans
         print("Plotting n and phi")
         fig,ax = plt.subplots(2,2)
         cmap = plt.get_cmap('seismic')
-        extremum = np.max([np.max(np.abs(n_opp)),np.max(np.abs(phi_opp))])  
-        ax[0,0].imshow(n_opp.real[:10,:10], cmap=cmap, norm=colors.SymLogNorm(10**1,vmin=-extremum, vmax=extremum))
+        extremum = np.max([np.max(np.abs(n_opp)),np.max(np.abs(phi_opp))]) 
+        #norm = colors.SymLogNorm(10**1,vmin=-extremum, vmax=extremum) 
+        norm = colors.Normalize(vmin=-extremum, vmax=extremum)
+        ax[0,0].imshow(n_opp.real[:10,:10], cmap=cmap, norm=norm)
         print(n_opp.real[:10,:10])
         ax[0,0].set_ylabel("n")
-        r = ax[0,1].imshow(n_opp.imag[:10,:10], cmap=cmap, norm=colors.SymLogNorm(10**1,vmin=-extremum, vmax=extremum))
+        r = ax[0,1].imshow(n_opp.imag[:10,:10], cmap=cmap, norm=norm)
         print(n_opp.imag[:10,:10])
-        ax[1,0].imshow(phi_opp.real[:10,:10], cmap=cmap, norm=colors.SymLogNorm(10**1,vmin=-extremum, vmax=extremum))
+        ax[1,0].imshow(phi_opp.real[:10,:10], cmap=cmap, norm=norm)
         print(phi_opp.real[:10,:10])
         ax[1,0].set_ylabel("phi")
         ax[1,0].set_xlabel("real")
-        ax[1,1].imshow(phi_opp.imag[:10,:10], cmap=cmap, norm=colors.SymLogNorm(10**1,vmin=-extremum, vmax=extremum))
+        ax[1,1].imshow(phi_opp.imag[:10,:10], cmap=cmap, norm=norm)
         print(phi_opp.imag[:10,:10])
         ax[1,1].set_xlabel("imaginary")
         #show cbar

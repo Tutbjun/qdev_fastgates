@@ -88,6 +88,7 @@ def eval_qb(gate_params, qubit, t0_samplerate=5, calZ=False):
     #import envelope
     H0, n_opp, phi_opp, t_g = qubit["H0"], qubit["n_opp"], qubit["phi_opp"], qubit["t_g"]
     c_opps = qubit["c_ops"]
+    alpha = qubit["alpha"]
     
     #t_g = gate_params.t_g
     ideal_gate = gate_params.ideal
@@ -126,8 +127,9 @@ def eval_qb(gate_params, qubit, t0_samplerate=5, calZ=False):
                     score = ge.evaluate([res_clone],ideal_gate,light=True)
                     return -score.real
                 #minimize the score
-                #r = minimize(score_at_Zamp, 0.01, bounds=[(-1,1)])
-                loss = lambda xs,ys: np.diff(xs)*np.mean(ys)
+                r = minimize(score_at_Zamp, 0.01, bounds=[(-1,1)])
+                val_best = r.x[0]   
+                """loss = lambda xs,ys: np.diff(xs)*np.mean(ys)
                 Sampler = Adaptive_1D_Custom(score_at_Zamp, (-1,1), loss_per_interval=loss)
                 for _ in range(100): Sampler.get_smarter(1)
                 data = Sampler.to_numpy()
@@ -136,7 +138,7 @@ def eval_qb(gate_params, qubit, t0_samplerate=5, calZ=False):
                     val_best = 0
                 else:
                     val_indx = np.argmin(data.T[1])
-                    val_best = data.T[0][val_indx]
+                    val_best = data.T[0][val_indx]"""
                 Z_amps.append(val_best)
                 #gate_params.VZ_amp_buffer.append(r.x[0])
                 #unit = get_simple_gate([0,0,1], r.x[0], baselen=len(results[i].states[0].full()))
@@ -190,6 +192,7 @@ def eval_qb(gate_params, qubit, t0_samplerate=5, calZ=False):
         "Ej": qubit["Ej"],
         "phi_dc": qubit["phi_dc"],
         "t_g": qubit["t_g"],
+        "alpha": qubit["alpha"],
         "score": s,
         "gate": gate,
         "L1": qubit["L1"],
@@ -357,13 +360,14 @@ def do_test(qubit,gate_params):
     #! is it diagonalized?
     scores, points = [], []
     qubit["H0"] = H0
+    qubit['alpha'] = H0[2,2]-H0[1,1] - (H0[1,1]-H0[0,0])
     qubit["n_opp"] = n_opp
     qubit["phi_opp"] = phi_opp
     qubit["c_ops"] = c_ops
     qubit["t_g"] = t_g
-    for gate in gate_names_2_eval:
-        gate_params = get_gate_params(gate)
-        score, datapoint, _ = eval_qb(gate_params, qubit)
+    #for gate in gate_names_2_eval:
+    #    #gate_params = get_gate_params(gate)
+    score, datapoint, _ = eval_qb(gate_params, qubit)
     scores.append(score)
     points.append(datapoint)
     return scores, points
@@ -484,6 +488,7 @@ def do_calib(args):
                     return None
                 #! is it diagonalized?
                 qubit["H0"] = H0
+                qubit['alpha'] = H0[2,2]-H0[1,1] - (H0[1,1]-H0[0,0])
                 qubit["n_opp"] = n_opp
                 qubit["phi_opp"] = phi_opp
                 qubit["c_ops"] = c_ops
@@ -494,13 +499,13 @@ def do_calib(args):
                 loss_per_interval = lambda xs,ys: (np.power(np.diff(xs)/(bnds[1]-bnds[0]),-1))*(1-np.max(ys))*np.max(np.array(xs)+1)
                 #Sampler = adaptive.Learner1D(dummyfunc, (0, 10), loss_per_interval=loss_per_interval)
                 Sampler = Adaptive_1D_Custom(dummyfunc, bnds, loss_per_interval=loss_per_interval)
-                for i in range(20):
+                for i in range(15):#!temp
                     point = Sampler.ask(1)
                     exec(f"gate_params.{valname}_amp = point[0][0]")
                     score, datapoint, gate_params = eval_qb(gate_params, qubit, t0_samplerate=3, calZ=do_VZ)
                     Sampler.tell(point[0][0], score)
                     x,y = [],[]
-                    if (i%4 == 0 and i>10) or i == 19:
+                    if (i%4 == 0 and i>10) or i == 14:
                         #find the peak, fit a polynomial, and eval the peak
                         data = Sampler.to_numpy()
                         val_best = np.max(data.T[1])
@@ -571,54 +576,31 @@ def main():
             scheme_scores_4_adaptive[gate_names_2_eval[i]] = []
         #learner = AdaptiveLearner(scheme_scores_4_adaptive[gate_names_2_eval[i]], [1.3, (0.1, 10), (0.1, 10), np.pi, (0.1,10), 1.58e-4, 1.58e-4], framework="adaptive")
         #learner = AdaptiveLearner(scheme_scores_4_adaptive[gate_names_2_eval[i]], [1.3, (0.58, 0.6), (5.70, 5.72), np.pi, (5,20), 1.58e-4, 1.58e-4], framework="adaptive")
-        learner = AdaptiveLearner(scheme_scores_4_adaptive[gate_names_2_eval[i]], [1.3, 0.59, 5.71, np.pi, (5,20), 1.58e-4, 1.58e-4], framework="adaptive")
+        #learner = AdaptiveLearner(scheme_scores_4_adaptive[gate_names_2_eval[i]], [1.3, 0.59, 5.71, np.pi, (5,20), 1.58e-4, 1.58e-4], framework="adaptive")
+        learner = AdaptiveLearner(scheme_scores_4_adaptive[gate_names_2_eval[i]], [1.3, 0.59, (0.1,10), np.pi, (5,20), 1.58e-4, 1.58e-4], framework="adaptive")
         learners[gate_names_2_eval[i]] = learner
     while True:
         for gate_name in gate_names_2_eval:
             #get the next point to evaluate
             learner = learners[gate_name]
-            qubits_2_eval = learner.get_next_dp(N=2)
+            qubits_2_eval = learner.get_next_dp(N=32)
             shuffle(qubits_2_eval)
-            #do potential calibration of gates
-            #gates_2_eval = np.zeros((len(qubits_2_eval), len(gate_names_2_eval))).tolist()
-            #i_s = range(len(qubits_2_eval))
-            #j_s = range(len(gate_names_2_eval))
-            #grid = np.meshgrid(i_s, j_s)
-            #calibs = [(i,qubits_2_eval[i],j,gate_names_2_eval[j]) for i,j in zip(grid[0].flatten(), grid[1].flatten())]
-            """for i in range(len(qubits_2_eval)):
-                gates_2_eval.append([])
-                for j in range(len(gate_names_2_eval)):
-                    gates_2_eval[i].append(do_calib(qubits_2_eval[i], gate_names_2_eval[j]))
-            raise NotImplementedError("Calibration not asserted")"""
             gate_instances = []
             gate_params = get_gate_params(gate_name)
             for i in range(len(qubits_2_eval)):
                 gate_instances.append(copy(gate_params))
-            if 1>0:
+            print(f"Evaluating {gate_name} with {len(qubits_2_eval)} qubits")
+            if 1<0:
                 for i,qubit,gate in zip(range(len(qubits_2_eval)), qubits_2_eval, gate_instances):
                     gate_instances[i] = do_calib((qubit, gate))
             else:
                 results = []
                 with normalPool(processes=16) as pool:
-                    #future = pool.map(do_calib, [calibs[i][1] for i in range(len(calibs))], [calibs[i][3] for i in range(len(calibs))])
-                    #iter = future.result()
-                    """pool.close()
-                    pool.join()
-                    for i,j in zip(grid[0].flatten(), grid[1].flatten()):
-                        try:
-                            result = next(iter)
-                            gates_2_eval[i][j] = result
-                        except ValueError as e:
-                            print(f"ValueError: {e}")
-                        except TimeoutError:
-                            print("Timeout")
-                        except:
-                            print("Unknown error")"""
                     args = [(qubits_2_eval[i], gate_instances[i]) for i in range(len(qubits_2_eval))]
                     results = pool.map(do_calib, args)
                     for i in range(len(qubits_2_eval)):
                         gate_instances[i] = results[i]
-
+            print("Starting evaluation")
 
             if 1<0:
                 results = [do_test(q,g) for q,g in zip(qubits_2_eval, gate_instances)]
@@ -626,13 +608,15 @@ def main():
                 results = []
                 with ProcessPool(max_workers=16) as pool:
                     
-                    future = pool.map(do_test, qubits_2_eval, gate_instances, timeout=5*60)
+                    future = pool.map(do_test, qubits_2_eval, gate_instances, timeout=30*60)#!conservative
                     iter = future.result()
                     for i in range(len(qubits_2_eval)): 
-                        def get_null_result(q):
+                        def get_null_result(q,timeout=False):
                             result = [[None], None]
                             result[1] = [q]
                             result[1][0]["score"] = None
+                            if timeout:
+                                result[1][0]["timeout"] = True
                             return result
                         try:
                             result = next(iter)
@@ -642,7 +626,7 @@ def main():
                             results.append(get_null_result(qubits_2_eval[i]))
                         except TimeoutError:
                             print("Timeout")
-                            results.append(get_null_result(qubits_2_eval[i]))
+                            results.append(get_null_result(qubits_2_eval[i], timeout=True))
                         except:
                             print("Unknown error")
             #unpack the results

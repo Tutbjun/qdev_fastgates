@@ -101,15 +101,8 @@ class GateParams:
         return self
     
 
-    def transform_2_rotating_frame(self,t0,t_g,omega_01):#!doublecheck this one (does give non-unitary matrix)
+    """def transform_2_rotating_frame(self,t0,t_g,omega_01):#!doublecheck this one (does give non-unitary matrix)
         global config
-        #self.H0 = 0.5*(self.H0 + self.H0.dag())#!temp
-        #self.matrixelem = 0.5*(self.matrixelem + self.matrixelem.dag())#!temp
-        #print(self.H0.full()-self.H0.full().T.conj())
-        #print(self.H0.full()-self.H0.full().T.conj())
-        #print(self.matrixelem.full()-self.matrixelem.full().T.conj())
-        #print(self.matrixelem.full()-self.matrixelem.full().T.conj())
-
         #def constituents
         me_11 = np.zeros((len(self.H0.full()),len(self.H0.full())),dtype=np.complex128)
         me_00 = np.zeros((len(self.H0.full()),len(self.H0.full())),dtype=np.complex128)
@@ -223,7 +216,7 @@ class GateParams:
         print(self.function_H(0).full())
         print(self.function_H(5).full())
         
-        return self.H0_bare, qt.QobjEvo(self.function_H)
+        return self.H0_bare, qt.QobjEvo(self.function_H)"""
 
     def transform_2_rotating_frame(self,t0,t_g,omega_01):
         #attempt 2, this time simpler
