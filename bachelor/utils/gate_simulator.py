@@ -59,7 +59,7 @@ def init_sim(H0, H,c_ops, n_opp,phi_opp, initial_state="even"):
     solvers = []
     for i in range(len(start_states)):
             
-        solvers.append(qt.MESolver(H,c_ops=c_ops, options={'store_final_state':True, 'progress_bar': "tqdm", "method": "bdf", "max_step": 0.5}))#, "min_step": tau/100}))
+        solvers.append(qt.MESolver(H,c_ops=c_ops, options={'store_final_state':True, 'progress_bar': "tqdm", "method": "bdf", "max_step": 2}))#, "min_step": tau/100}))
         #print(H(0).full()-H(0).full().T.conj())
         #solvers.append(qt.MESolver(H, c_ops=[], options={'nsteps':10
                                     #args for run:
