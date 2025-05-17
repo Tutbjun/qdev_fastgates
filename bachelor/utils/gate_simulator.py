@@ -2,6 +2,7 @@
 
 
 import qutip as qt
+import qutip_cupy
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -13,9 +14,9 @@ t0s = []
 
 def init_sim(H0, H,c_ops, n_opp,phi_opp, initial_state="even"):
     #qbi.init_qubit(1.3,0.59,5.71,np.pi)
-    global start_states
-    global solvers
-    global t0s
+    #global start_states
+    #global solvers
+    #global t0s
     stateCnt = len(H0)
     paulis = [qt.sigmax(),qt.sigmay(),qt.sigmaz()]
     start_states = []
@@ -31,17 +32,7 @@ def init_sim(H0, H,c_ops, n_opp,phi_opp, initial_state="even"):
     else:
         raise NotImplementedError
     omega_01 = H0[1,1]-H0[0,0]
-    #print(H(0).full())
-    #print(H(5).full())
-    #make plot of |0><1| on H
-    """T = np.linspace(0, 20, 100)
-    r = [H(t).full()[0][1].real for t in T]
-    i = [H(t).full()[0][1].imag for t in T]
-    plt.plot(T, r)
-    plt.plot(T, i)
-    plt.savefig("temp/envelope.png")
-    plt.clf()
-    plt.close('all')"""
+
 
     tau = 1/omega_01
     tau_r = np.real(tau)
@@ -56,27 +47,31 @@ def init_sim(H0, H,c_ops, n_opp,phi_opp, initial_state="even"):
     #pure to density
     for i in range(len(start_states)):
         start_states[i] = qt.ket2dm(qt.Qobj(start_states[i][:,np.newaxis]))
-    solvers = []
+    solvers = []#!todo: shit, are the solvers shared across threads?!
     for i in range(len(start_states)):
-            
-        solvers.append(qt.MESolver(H,c_ops=c_ops, options={'store_final_state':True, 'progress_bar': "tqdm", "method": "bdf", "max_step": 2}))#, "min_step": tau/100}))
+        #H = H.to('cupyd')
+        #c_ops = [c.to('cupyd') for c in c_ops]
+        solvers.append(qt.MESolver(H,c_ops=c_ops, options={'store_final_state':True, 'progress_bar': None, "method": "bdf", "max_step": 2}))#, "min_step": tau/100}))
         #print(H(0).full()-H(0).full().T.conj())
         #solvers.append(qt.MESolver(H, c_ops=[], options={'nsteps':10
                                     #args for run:
                                     #, start_states[i], np.linspace(t0,tau*2+t0,1000), [], []))
         #solvers.append(qt.SESolver(H, options={'nsteps':10000}))
     
+    return solvers, start_states
+    
 
 import asyncio
 import multiprocessing
-def simulate(t0,t_length):
-    global solvers
-
+def simulate(solvers, start_states, t0,t_length):
+    #global solvers
+    t0 = float(t0)
+    t_length = float(t_length)
     results = []
     i = 0
     for j in range(len(start_states)):
         #print(start_states[j].full())
-        result = solvers[i].run(start_states[j], np.linspace(t0,t_length,500))
+        result = solvers[i].run(start_states[j], np.linspace(t0,t_length,int(500)))
         """process = multiprocessing.Process(target=solvers[i].run, args=(start_states[j], np.linspace(t0,t_length+t0,1000), [], []))
         process.start()
         process.join(timeout=timeout)

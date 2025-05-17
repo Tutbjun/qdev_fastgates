@@ -1,5 +1,6 @@
 import numpy as np
 import qutip as qt
+import qutip_cupy
 import matplotlib.pyplot as plt
 import matplotlib._pylab_helpers as pylab_helpers
 def is_figure_active():
@@ -34,12 +35,13 @@ def evaluate(results,ideal_gate,light=False):#!validate
         #plot states on bloch sphere
         initial_state = result.states[0]
         final_state = result.states[-1]
+        final_state = np.dot(np.dot(ideal_gate_inverse,final_state.full()),ideal_gate_inverse.T.conj())
+        final_state = qt.Qobj(final_state)
         nextlast_state = result.states[-2]
         #print((final_state-result.states[-2]).full())
         if config["bloch"] and not light:
 
-            final_state = np.dot(np.dot(ideal_gate_inverse,final_state.full()),ideal_gate_inverse.T.conj())
-            final_state = qt.Qobj(final_state)
+            
             ax=[0,0]
             if not is_figure_active():
                 fig = plt.figure()
@@ -71,6 +73,7 @@ def evaluate(results,ideal_gate,light=False):#!validate
                 try:
                     #plt.savefig(f"temp/bloch_{result.solver}.png")
                     plt.savefig("bloch.png")
+                    pass
                 except:
                     print("Could not save figure")
                 #plt.show()
@@ -83,7 +86,8 @@ def evaluate(results,ideal_gate,light=False):#!validate
 
         
         #find which opperator the initial state is an eigenvector of
-        truth = initial_state.isherm and np.isclose(initial_state.tr(),1) and np.isclose((initial_state*initial_state).tr(),1)
+        inits = qt.Qobj(initial_state.full())
+        truth = inits.isherm and np.isclose(inits.tr(),1) and np.isclose((inits*inits).tr(),1)
         if not truth:
             print("The initial state is not a pure state!")
         #print("Trace: ",final_state.tr())
