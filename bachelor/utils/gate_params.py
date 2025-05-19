@@ -228,13 +228,73 @@ def get_gate_params(gate="demo"):
         })
     elif "FAST-MAGNUS" in gate:
         c_arr = [sp.Symbol(f'c_{n}') for n in range(1, 5)]
+        t = sp.Symbol('t')
+        t_0 = sp.Symbol('t_0')
+        t_g = sp.Symbol('t_g')
         envelope = sp.Piecewise(
             (
                 sum(
-
-                )
+                    [c_arr[i-1] * (1-sp.cos(sp.pi*i*(t-t_0)/t_g)**2) for i in range(1, 5)]
+                ),
                 (t>=t_0) & (t<=t_g+t_0))
             , (0,True))
+        omega_01 = sp.Symbol('omega_{01}')
+        omega_d = omega_01
+        theta_a = 0
+        theta_b = 0
+        calibrate_Omega = True
+        Omega_eq = None
+        n,m = sp.symbols('n'), sp.symbols('m')
+        eq_gxn = sum(
+            [c_arr[i-1] * (
+                sp.cos(2*omega_d*t_0)*sp.cos(2*omega_d*t_g) 
+                - sp.sin(2*omega_d*t_0)*sp.sin(2*omega_d*t_g)
+                - sp.cos(2*omega_d*t_0)
+                + (sp.cos(2*omega_d*(t_0+t_g)) -sp.cos(2*omega_d*t_0))/( ((i*sp.pi)/(2*omega_d*t_g))**2 - 1)
+            ) for i in range(1, 5)]
+        ) 
+        eq_gyn = sum(
+            [c_arr[i-1] * (
+                sp.sin(2*omega_d*t_0)*sp.cos(2*omega_d*t_g) 
+                - sp.cos(2*omega_d*t_0)*sp.sin(2*omega_d*t_g)
+                - sp.cos(2*omega_d*t_0)
+                + (sp.sin(2*omega_d*(t_0+t_g)) -sp.sin(2*omega_d*t_0))/( ((i*sp.pi)/(2*omega_d*t_g))**2 - 1)
+            ) for i in range(1, 5)]
+        ) 
+        eq_gxm = eq_gxn.subs(n, m)
+        eq_gym = eq_gyn.subs(n, m)
+        F_x = omega_d/sp.pi*sp.integrate(sp.FU['TR8'](eq_gxn.as_expr()*eq_gxm.as_expr()), (t_0,0,sp.pi/omega_01))
+        F_y = omega_d/sp.pi*sp.integrate(sp.FU['TR8'](eq_gyn.as_expr()*eq_gym.as_expr()), (t_0,0,sp.pi/omega_01))
+        cond_eq = sp.pi/4-t_g*sum(c_arr)
+        omega_0 = 0
+        omega_12 = sp.Symbol('omega_{12}')
+        omega_02 = omega_01 + omega_12
+        omega_03 = sp.Symbol('omega_{23}') + omega_12 + omega_01
+        forbidden_intervals = [
+            [(omega_02-omega_0)*0.9, (omega_02-omega_0)*1.1],
+            [(omega_12+omega_01)*0.5,(omega_12+omega_01)*0.5-(omega_12-omega_01)],
+            [omega_03,np.infty]
+        ]
+        f = sp.Symbol('f')
+        gn_func = sp.integrate(
+            sp.exp(-1j*f*t)*(1-sp.cos(2*sp.pi*n*t/t_g)),t,
+            (t_0, t_0+t_g)
+        )
+        gm_func = gn_func.subs(n, m)
+        A_matrix = sum(
+            [sp.integrate(
+                gn_func*sp.conjugate(gm_func), f,
+                (forbidden_intervals[i][0], forbidden_intervals[i][1])
+            ) for i in range(len(forbidden_intervals))]
+        )
+        K = sum(
+            [sum(
+                A_matrix.subs(n,i).subs(m,j)*c_arr[i-1]*c_arr[j-1]
+                for j in range(1, 5)
+            ) for i in range(1, 5)]
+        )
+        Lagrangian = K + F_x + F_y + cond_eq
+        Lagrangian = sp.simplify(Lagrangian)
     elif "magnus1_x_virt_z" in gate:
         phi = 0
         omega_d = sp.Symbol('omega_{01}')

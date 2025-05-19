@@ -15,7 +15,7 @@ from time import time, sleep
 from IPython.display import display as display_
 from IPython.display import Math
 import qutip as qt
-import qutip_cupy
+#import qutip_cupy
 import scipy as scpy
 
 config = {}
@@ -389,7 +389,7 @@ def solveEi(hamiltonian, truncation,meta=""):
         #while GPUtil.getGPUs()[device_id].
         print(f'Array created on GPU {device_id}')
         H = cupyx.scipy.sparse.diags([H_d1,H_d2,H_d0], [1,-1,0], format="csr")
-        eigvals, eigvecs = eigsh(H, k=truncation, which='SA', return_eigenvectors=True)
+        eigvals, eigvecs = eigsh(H, return_eigenvectors=True)
         eigvals_ = cupy.asnumpy(eigvals)
         eigvecs_ = cupy.asnumpy(eigvecs)
         del eigvals, eigvecs, H
@@ -411,7 +411,7 @@ def solveEi(hamiltonian, truncation,meta=""):
     return eigvals, eigvecs, basisTransform
 
 import matplotlib
-def get_diag_Hamiltonian(Ec,El,Ej,phi_dc,omega_01,alpha, base_ex=np.pi*4, base_size=500,expansion_order=10,truncation=5,periodic=False):
+def get_diag_Hamiltonian(Ec,El,Ej,phi_dc,omega_01,alpha, base_ex=np.pi*4, base_size=500,expansion_order=10,truncation=5,periodic=False,optim=True):
     #eigvals_landscape = []
     gradient = [np.inf,np.inf]#what to gain from varying the specific variables
     vary_mode = 0
@@ -460,7 +460,7 @@ def get_diag_Hamiltonian(Ec,El,Ej,phi_dc,omega_01,alpha, base_ex=np.pi*4, base_s
         plt.show()
         plt.clf()
         plt.close('all')
-    if omega_01 != None and alpha != None:
+    if omega_01 != None and alpha != None and optim:
         params2opt = []
         if Ec == None: params2opt.append("Ec")
         if El == None: params2opt.append("El")
@@ -496,7 +496,7 @@ def get_diag_Hamiltonian(Ec,El,Ej,phi_dc,omega_01,alpha, base_ex=np.pi*4, base_s
                 indx_f += 1
             if Ec_ < 0 or El_ < 0 or Ej_ < 0:
                 return np.inf
-            H0 = get_Hamiltonian(Ec_,El_,Ej_,phi_dc,omega_01,alpha, 2*np.pi, 2000,expansion_order)
+            H0 = get_Hamiltonian(Ec_,El_,Ej_,phi_dc,omega_01,alpha, 4*np.pi, 3000,expansion_order)
             if H0 is None:
                 return np.inf
             eigvals, _, _ = solveEi(H0,truncation,meta=f"{Ec_},{El_},{Ej_},{phi_dc},{2*np.pi},{2000},{expansion_order}")
@@ -565,7 +565,7 @@ def get_diag_Hamiltonian(Ec,El,Ej,phi_dc,omega_01,alpha, base_ex=np.pi*4, base_s
     last_eigvals = eigvals
     i = 0
     last_gradient = [np.inf,np.inf]
-    while not np.array([gradient[0]<0.0001, gradient[1]<0.0001]).all() and truncation > 2:
+    while not np.array([gradient[0]<0.0001, gradient[1]<0.0001]).all() and truncation > 2 and optim:
         if vary_mode == 0:
             #vary base size
             base_size += 1000
@@ -612,13 +612,13 @@ def get_diag_Hamiltonian(Ec,El,Ej,phi_dc,omega_01,alpha, base_ex=np.pi*4, base_s
     #print(diagonalized_H-diagonalized_H.T.conj())
     
     #print(diagonalized_H-diagonalized_H.T.conj())
-    return diagonalized_H, eigvecs, basisTransform, eigvals, base_ex, base_size
+    return diagonalized_H, eigvecs, basisTransform, eigvals, base_ex, base_size, Ec, El, Ej
     
 
 from matplotlib import pyplot as plt
 from matplotlib import colors
 
-def init_qubit(Ec,El,Ej,phi_dc,omega_01,alpha,c_ops,t_g, base_ex=np.pi*4, base_size=1001,expansion_order=50, truncation=20):
+def init_qubit(Ec,El,Ej,phi_dc,omega_01,alpha,c_ops,Lambdas, base_ex=np.pi*4, base_size=1001,expansion_order=50, truncation=20,optimizebasis=True):
     global H0
     global n_opp
     global phi_opp
@@ -633,7 +633,8 @@ def init_qubit(Ec,El,Ej,phi_dc,omega_01,alpha,c_ops,t_g, base_ex=np.pi*4, base_s
         c_ops[i] = np.zeros((truncation,truncation),dtype=np.complex128)
         c_ops[i][:len(c_ops_tmp),:len(c_ops_tmp)] = c_ops_tmp
 
-    H0_diag, eigenvecs, basisTransform, eigenvals, new_ex, new_size = get_diag_Hamiltonian(Ec,El,Ej,phi_dc,omega_01,alpha, base_ex, base_size,expansion_order, truncation=truncation,periodic=periodic)
+    H0_diag, eigenvecs, basisTransform, eigenvals, new_ex, new_size, Ec, El, Ej = get_diag_Hamiltonian(Ec,El,Ej,phi_dc,omega_01,alpha, base_ex, base_size,expansion_order, truncation=truncation,periodic=periodic,optim=optimizebasis)
+    t_g = Lambdas/(H0_diag[1,1]-H0_diag[0,0])*2*np.pi
     base_ex = new_ex
     base_size = new_size
     if H0_diag is None:
@@ -743,7 +744,7 @@ def init_qubit(Ec,El,Ej,phi_dc,omega_01,alpha,c_ops,t_g, base_ex=np.pi*4, base_s
 
     #print("H0: ",H0)
 
-    return H0, n_opp, phi_opp, c_ops, t_g, base_ex, base_size
+    return H0, n_opp, phi_opp, c_ops, t_g, base_ex, base_size, Ec, El, Ej
 
 
 

@@ -1,0 +1,8 @@
+{
+    "python.createEnvironment.contentButton": "show",
+    "python.defaultInterpreterPath": "/home/ubuntu-compute/miniconda3/bin/python",
+    "workbench.colorCustomizations": {
+        "minimap.background": "#262a31dd",
+        "scrollbar.shadow": "#262a31dd"
+    }
+}

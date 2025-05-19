@@ -26,11 +26,12 @@ gate_names_2_eval = [#actual values are hidden off in the other file
     
     
     #"corotating_xy_virt_z",
-    #"FAST-MAGNUS_nooptim",
-    "magnus1_x_virt_z_nooptim",
-    "corotating_xy_virt_z_nooptim",
-    "RWA_x_nooptim",
     "commensurate_x_virt_z",
+    #"FAST-MAGNUS_nooptim",
+    #"magnus1_x_virt_z_nooptim",
+    #"corotating_xy_virt_z_nooptim",
+    #"RWA_x_nooptim",
+    
     
     
     
@@ -90,7 +91,8 @@ def main():
         #learner = AdaptiveLearner(scores_withmeta[gate_names_2_eval[i]], [1, 0.8, 10, np.pi, (0.001,100), 0, 0], framework="adaptive",truncation=10)
         #learner = AdaptiveLearner(scores_withmeta[gate_names_2_eval[i]], [1, 1, 1, np.pi, (29.4,29.6), 0, 0], framework="adaptive",truncation=2)
         #learner = AdaptiveLearner(scores_withmeta[gate_names_2_eval[i]], [None, 1, None, 0.25, 25, np.pi, (40,5000), 0, 0], framework="adaptive_area",truncation=3)
-        learner = AdaptiveLearner(scores_withmeta[gate_names_2_eval[i]], [None, 1, None, 0.25, 25, np.pi, (40,5000), 0, 0], framework="adaptive_area",truncation=3)
+        learner = AdaptiveLearner(scores_withmeta[gate_names_2_eval[i]], [None, 1, None, 0.25, 25, np.pi, (1,2), 0, 0], framework="adaptive_area",truncation=2)
+        #learner = AdaptiveLearner(scores_withmeta[gate_names_2_eval[i]], [None, 1, None, 0.25, 25, np.pi, (10,10.01), 0, 0], framework="adaptive_area",truncation=3)
         learners[gate_names_2_eval[i]] = learner
     #pool the above task
     
@@ -113,7 +115,7 @@ def main():
             for i in range(len(qubits_2_eval)):
                 gate_instances.append(copy(gate_params))
             print(f"Evaluating {gate_name} with {len(qubits_2_eval)} qubits")
-            if 1<0:
+            if 1>0:
                 for i,qubit,gate in zip(range(len(qubits_2_eval)), qubits_2_eval, gate_instances):
                     qubits_2_eval[i], gate_instances[i] = calib_gate((qubit, gate))
             else:
@@ -126,7 +128,7 @@ def main():
                         qubits_2_eval[i], gate_instances[i] = results[i]
             print("Starting evaluation")
 
-            if 1<0:
+            if 1>0:
                 results = [do_test(q,g) for q,g in zip(qubits_2_eval, gate_instances)]
             else:
                 results = []

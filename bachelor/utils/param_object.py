@@ -1,5 +1,5 @@
 import qutip as qt
-import qutip_cupy
+#import qutip_cupy
 import numpy as np
 import sympy as sp
 from matplotlib import pyplot as plt

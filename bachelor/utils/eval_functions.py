@@ -27,8 +27,8 @@ class AdaptiveLearner:
     def __init__(self, known_dps, bounds, framework="adaptive", truncation=2):
         #known_dps are expected to be a list of dictionaries
         ys = [dp["score"] for dp in known_dps]
-        xs = [[dp["Ec"], dp["El"], dp["Ej"], dp['omega_01'], dp['alpha'], dp["phi_dc"],dp["t_g"],dp["L1"],dp["L2"]] for dp in known_dps]
-        point_keys = ["Ec", "El", "Ej", "omega_01", "alpha", "phi_dc", "t_g", "L1", "L2"]
+        xs = [[dp["Ec"], dp["El"], dp["Ej"], dp['omega_01_target'], dp['alpha_target'], dp["phi_dc"],dp["Lambdas"],dp["L1"],dp["L2"]] for dp in known_dps]
+        point_keys = ["Ec", "El", "Ej", "omega_01_target", "alpha_target", "phi_dc", "Lambdas", "L1", "L2"]
         self.ys = np.array(ys)
         self.xs = np.array(xs)
         self.point_keys = point_keys
@@ -150,9 +150,9 @@ class AdaptiveLearner:
             points = [points,np.full(N, np.inf)]
         else:
             raise NotImplementedError(f"Framework {self.framework} is not implemented")
-        t_g_index = self.point_keys.index("t_g")
+        t_g_index = self.point_keys.index("Lambdas")
         for i in list(range(t_g_index)):
-            if self.fixed[i] is not None:
+            if self.bounds[i] is None:#!new
                 t_g_index -= 1
         if t_g_index > 0:
             points[0][t_g_index] = np.power(10, points[0][t_g_index])#convert t_g back to normal scale
@@ -190,7 +190,7 @@ class AdaptiveLearner:
             with open("qubit_names.pickle", "rb") as f:#interprit as dict
                 qubit_names = pickle.load(f)
         for i in range(len(rpoints)):
-            name = f"qubit_{rpoints[i]['Ec']}_{rpoints[i]['El']}_{rpoints[i]['Ej']}_{rpoints[i]['phi_dc']}_{rpoints[i]['t_g']}_{rpoints[i]['L1']}_{rpoints[i]['L2']}"
+            name = f"qubit_{rpoints[i]['Ec']}_{rpoints[i]['El']}_{rpoints[i]['Ej']}_{rpoints[i]['phi_dc']}_{rpoints[i]['Lambdas']}_{rpoints[i]['L1']}_{rpoints[i]['L2']}"
             rpoints[i]["name"] = name
             if name not in qubit_names.keys():
                 qubit_names[name] = len(qubit_names)
@@ -271,10 +271,11 @@ class AdaptiveLearner:
         point["c_ops"] = [c1, c2]
         return point
 from scipy.optimize import minimize
+from scipy.optimize import basinhopping
 import asyncio
 from copy import deepcopy as copy
 import qutip as qt
-import qutip_cupy
+#import qutip_cupy
 def get_simple_gate(unitvec,theta,baselen=2):
     sx, sy, sz = qt.sigmax().full(), qt.sigmay().full(), qt.sigmaz().full()
     unitvec = np.array(unitvec)/np.linalg.norm(unitvec)
@@ -299,7 +300,7 @@ def eval_qubit(gate_params, qubit, t0_samplerate=5, calZ=False):
     #import envelope
     H0, n_opp, phi_opp, t_g = qubit["H0"], qubit["n_opp"], qubit["phi_opp"], qubit["t_g"]
     c_opps = qubit["c_ops"]
-    alpha = qubit["alpha"]
+    #alpha = qubit["alpha"]
     
     #t_g = gate_params.t_g
     ideal_gate = gate_params.ideal
@@ -330,7 +331,7 @@ def eval_qubit(gate_params, qubit, t0_samplerate=5, calZ=False):
         gate_dynamics = copy(gate_dynamics.assert_opps(copy(n_opp), copy(phi_opp)))
         gate_dynamics = copy(gate_dynamics.compile_as_Qobj())
         H0_sim, H_sim = copy(gate_dynamics.transform_2_rotating_frame(t_g,omega_01=copy(H0[1,1]-H0[0,0]),t0=t0, n=n,dt0=dt0))
-        print(H_sim(2).full())
+        #print(H_sim(2).full())
         #H = gate_dynamics.get_QuTiP_compile()
         solvers, start_states = gs.init_sim(H0_sim, H_sim, c_opps, n_opp, phi_opp,initial_state="even")
         if "H_log.txt" in os.listdir("temp") and config["H_log"] and cnt==0: os.remove("temp/H_log.txt")
@@ -375,7 +376,8 @@ def eval_qubit(gate_params, qubit, t0_samplerate=5, calZ=False):
             Z_amps.append(val_best)
         results_list.append(results)
     if calZ:
-        Z_amp_avg = np.median(Z_amps)
+        if len(np.unique(Z_amps)) != len(Z_amps): Z_amp_avg = np.median(Z_amps)
+        else:                                     Z_amp_avg = np.random.choice(Z_amps)
         unit = get_simple_gate([0,0,1], Z_amp_avg, baselen=len(results[0].states[0].full()))
         for i in range(len(results_list)):
             for j in range(len(results_list[i])):
@@ -437,8 +439,11 @@ def eval_qubit(gate_params, qubit, t0_samplerate=5, calZ=False):
         "Ej": qubit["Ej"],
         "phi_dc": qubit["phi_dc"],
         "t_g": qubit["t_g"],
-        "alpha": qubit["alpha"],
-        "omega_01": qubit["omega_01"],
+        "Lambdas": qubit["Lambdas"],
+        "alpha_actual": qubit["alpha_actual"],
+        "alpha_target": qubit["alpha_target"],
+        "omega_01_actual": qubit["omega_01_actual"],
+        "omega_01_target": qubit["omega_01_target"],
         "score": s,
         "gate": gate,
         "L1": qubit["L1"],
@@ -509,7 +514,7 @@ def single_param(gate_params, qubit, gate, do_VZ=False):
                 #create a new matrix
                 
                 #do the calibration
-                H0, n_opp, phi_opp, c_ops, t_g, base_ex, base_size = qbi.init_qubit(qubit["Ec"], qubit["El"], qubit["Ej"], qubit["phi_dc"],qubit['omega_01'],qubit['alpha'], qubit["c_ops"], qubit["t_g"],truncation=qubit["truncation"], base_ex=qubit["base_ex"], base_size=qubit["base_size"])
+                H0, n_opp, phi_opp, c_ops, t_g, base_ex, base_size, Ec, El, Ej = qbi.init_qubit(qubit["Ec"], qubit["El"], qubit["Ej"], qubit["phi_dc"],qubit['omega_01_target'],qubit['alpha_target'], qubit["c_ops"], qubit["Lambdas"],truncation=qubit["truncation"], base_ex=qubit["base_ex"], base_size=qubit["base_size"])
                 qubit["base_ex"] = base_ex
                 qubit["base_size"] = base_size
                 if H0 is None:
@@ -517,13 +522,16 @@ def single_param(gate_params, qubit, gate, do_VZ=False):
                     return None
                 #! is it diagonalized?
                 qubit["H0"] = H0
-                if len(H0) <= 2: qubit['alpha'] = np.inf
-                else: qubit['alpha'] = H0[2,2]-H0[1,1] - (H0[1,1]-H0[0,0])
-                qubit["omega_01"] = H0[1,1]-H0[0,0]
+                if len(H0) <= 2: qubit['alpha_actual'] = np.inf
+                else: qubit['alpha_actual'] = H0[2,2]-H0[1,1] - (H0[1,1]-H0[0,0])
+                qubit["omega_01_actual"] = H0[1,1]-H0[0,0]
                 qubit["n_opp"] = n_opp
                 qubit["phi_opp"] = phi_opp
                 qubit["c_ops"] = c_ops
                 qubit["t_g"] = t_g
+                qubit["Ej_actual"] = Ej
+                qubit["El_actual"] = El
+                qubit["Ec_actual"] = Ec
                 dummyfunc = lambda x: None
                 #loss_per_interval = lambda xs,ys: np.diff(xs)*(np.mean(ys)**(-1))#!I have no clue what y is at this point, but this seem to give the correct behavior
                 if "Omega" in valname:
@@ -613,9 +621,9 @@ def single_param(gate_params, qubit, gate, do_VZ=False):
                 os.remove(matrixname.replace(".pickle", ""))
             except FileNotFoundError:
                 pass
-    return gate_params
+    return qubit, gate_params
 
-
+import matplotlib
 cnt = 0
 def two_param(gate_params, qubit, gate, do_VZ=False):
     """for key in gate_params.is_calibrated.keys():
@@ -677,7 +685,7 @@ def two_param(gate_params, qubit, gate, do_VZ=False):
             #create a new matrix
             
     #do the calibration
-    H0, n_opp, phi_opp, c_ops, t_g, base_ex, base_size = qbi.init_qubit(qubit["Ec"], qubit["El"], qubit["Ej"], qubit["phi_dc"],qubit['omega_01'],qubit['alpha'], qubit["c_ops"], qubit["t_g"], truncation=qubit["truncation"], base_ex=qubit["base_ex"], base_size=qubit["base_size"])
+    H0, n_opp, phi_opp, c_ops, t_g, base_ex, base_size, Ec, El, Ej = qbi.init_qubit(qubit["Ec"], qubit["El"], qubit["Ej"], qubit["phi_dc"],qubit['omega_01_target'],qubit['alpha_target'], qubit["c_ops"], qubit["Lambdas"], truncation=qubit["truncation"], base_ex=qubit["base_ex"], base_size=qubit["base_size"])
     qubit["base_ex"] = base_ex
     qubit["base_size"] = base_size
     if H0 is None:
@@ -685,13 +693,17 @@ def two_param(gate_params, qubit, gate, do_VZ=False):
         return None
     #! is it diagonalized?
     qubit["H0"] = H0
-    if len(H0) <= 2: qubit['alpha'] = np.inf
-    else: qubit['alpha'] = H0[2,2]-H0[1,1] - (H0[1,1]-H0[0,0])
-    qubit["omega_01"] = H0[1,1]-H0[0,0]
+    if len(H0) <= 2: qubit['alpha_actual'] = np.inf
+    else: qubit['alpha_actual'] = H0[2,2]-H0[1,1] - (H0[1,1]-H0[0,0])
+    qubit["omega_01_actual"] = H0[1,1]-H0[0,0]
     qubit["n_opp"] = n_opp
     qubit["phi_opp"] = phi_opp
     qubit["c_ops"] = c_ops
     qubit["t_g"] = t_g
+    qubit["Lambdas"] = qubit["Lambdas"]
+    qubit["Ec_actual"] = Ec
+    qubit["El_actual"] = El
+    qubit["Ej_actual"] = Ej
     #dummyfunc = lambda x: None
     #loss_per_interval = lambda xs,ys: np.diff(xs)*(np.mean(ys)**(-1))#!I have no clue what y is at this point, but this seem to give the correct behavior
     #bnds = (0, 2)
@@ -728,10 +740,13 @@ def two_param(gate_params, qubit, gate, do_VZ=False):
         gates.append(local_gate)
         scores.append(-score)
         cord.append(vals)
-        if 1 < 0:
+        if 1 > 0:
             plt.clf()
             cmap = plt.get_cmap("viridis")
-            plt.scatter(np.array(cord).T[0], np.array(cord).T[1], c=np.array(scores)+1, cmap=cmap)
+            plt.scatter(np.array(cord).T[0], np.array(cord).T[1], c=np.array(scores)+1, cmap=cmap, norm=matplotlib.colors.LogNorm())
+            #fit a polynomial landscape to the data (cord 1+2, score)
+            #coeff, r, rank, s = np.linalg.lstsq(np.array(cord), np.array(scores))
+            #func = lambda x,y: coeff[3]*x**2 + coeff[6]*y**2 
             plt.colorbar()
             plt.xlabel(keys[0])
             plt.ylabel(keys[1])
@@ -739,6 +754,7 @@ def two_param(gate_params, qubit, gate, do_VZ=False):
             plt.savefig(f"temp/optimize_{qubit['name']}_{gate}.png")
             plt.savefig(f"temp/optimize.png")
             plt.clf()
+            plt.close("all")
         cnt += 1
         print(f"Count: {cnt}")
         if 1-score <= 2e-6:
@@ -746,15 +762,16 @@ def two_param(gate_params, qubit, gate, do_VZ=False):
         return -score
     #do a simple scipy minimize
     try:
-        _ = minimize(loss_func, initial_values, options={"maxiter": 20},method="Nelder-Mead")
+        #_ = minimize(loss_func, initial_values, options={"maxiter": 20},method="Nelder-Mead")
+        _ = basinhopping(loss_func, initial_values, niter=3, T=1e-3, stepsize=initial_values[0]*0.5, minimizer_kwargs={"method": "Nelder-Mead", "options": {"maxiter": 15}}, disp=True)
     except StopIteration:
         print("Target fidelity reached")
     """final = result.x
     for i, key in enumerate(keys):
         exec(f"gate_params.{key}_amp = final[i]")"""
     gate_params = gates[np.argmin(scores)]
-    if do_VZ:
-        _, _, gate_params = eval_qubit(gate_params, qubit, t0_samplerate=3, calZ=True)
+    """if do_VZ:
+        _, _, gate_params = eval_qubit(gate_params, qubit, t0_samplerate=3, calZ=True)"""
     
     """
     data = Sampler.to_numpy()
@@ -783,7 +800,7 @@ def two_param(gate_params, qubit, gate, do_VZ=False):
         os.remove(matrixname.replace(".pickle", ""))
     except FileNotFoundError:
         pass"""
-    return gate_params
+    return qubit, gate_params
 
 class Adaptive_1D_Custom():
     def __init__(self, function, bounds, loss_per_interval=None):
@@ -840,7 +857,7 @@ class Adaptive_1D_Custom():
         self.tell(point[0][0], score)
 
 def do_test(qubit,gate_params):
-    H0, n_opp, phi_opp, c_ops, t_g, base_ex, base_size = qbi.init_qubit(qubit["Ec"], qubit["El"], qubit["Ej"], qubit["phi_dc"],qubit['omega_01'],qubit['alpha'], qubit["c_ops"], qubit["t_g"],truncation=qubit["truncation"], base_ex=qubit["base_ex"], base_size=qubit["base_size"])
+    H0, n_opp, phi_opp, c_ops, t_g, base_ex, base_size, Ec, El, Ej = qbi.init_qubit(qubit["Ec_actual"], qubit["El_actual"], qubit["Ej_actual"], qubit["phi_dc"],qubit['omega_01_target'],qubit['alpha_target'], qubit["c_ops"], qubit["Lambdas"],truncation=qubit["truncation"], base_ex=qubit["base_ex"], base_size=qubit["base_size"],optimizebasis=False)
     qubit["base_ex"] = base_ex
     qubit["base_size"] = base_size
     if H0 is None:
@@ -848,13 +865,14 @@ def do_test(qubit,gate_params):
     #! is it diagonalized?
     scores, points = [], []
     qubit["H0"] = H0
-    if len(H0) <= 2: qubit['alpha'] = np.inf
-    else: qubit['alpha'] = H0[2,2]-H0[1,1] - (H0[1,1]-H0[0,0])
-    qubit["omega_01"] = H0[1,1]-H0[0,0]
+    if len(H0) <= 2: qubit['alpha_actual'] = np.inf
+    else: qubit['alpha_actual'] = H0[2,2]-H0[1,1] - (H0[1,1]-H0[0,0])
+    qubit["omega_01_actual"] = H0[1,1]-H0[0,0]
     qubit["n_opp"] = n_opp
     qubit["phi_opp"] = phi_opp
     qubit["c_ops"] = c_ops
     qubit["t_g"] = t_g
+    qubit["Lambdas"] = qubit["Lambdas"]
     #for gate in gate_names_2_eval:
     #    #gate_params = get_gate_params(gate)
     score, datapoint, _ = eval_qubit(gate_params, qubit, t0_samplerate=10)
@@ -873,17 +891,31 @@ def calib_gate(args):
         do_VZ = True
     keys_wo_VZ = [key for key in gate_params.is_calibrated.keys() if "VZ" not in key]
     if len(keys_wo_VZ) == 1:#singel variable calibration
-        gate_params = single_param(gate_params, qubit, gate, do_VZ)
+        qubit, gate_params = single_param(gate_params, qubit, gate, do_VZ)
     elif len(keys_wo_VZ) == 2:
-        gate_params = two_param(gate_params, qubit, gate, do_VZ)
+        qubit, gate_params = two_param(gate_params, qubit, gate, do_VZ)
     elif len(keys_wo_VZ) == 0:
-        val = gate_params.Omega_eq.subs(sp.Symbol("t_g"),qubit["t_g"])
-        exec(f"gate_params.Omega_amp = val")
-        #one for lambda, one for wether omega_{01} is in Omega_eq
         t1 = hasattr(gate_params,"lambda_eq")
         t2 = sp.Symbol("omega_{01}") in gate_params.Omega_eq.free_symbols
+        t3 = "t_g" not in qubit.keys()
+        if t1 or t2 or t3:
+            H0, n_opp, phi_opp, c_ops, t_g, base_ex, base_size, Ec, El, Ej = qbi.init_qubit(qubit["Ec"], qubit["El"], qubit["Ej"], qubit["phi_dc"],qubit['omega_01_target'],qubit['alpha_target'], qubit["c_ops"], qubit["Lambdas"],truncation=qubit["truncation"], base_ex=qubit["base_ex"], base_size=qubit["base_size"])
+            qubit["Ej_actual"] = Ej
+            qubit["Ec_actual"] = Ec
+            qubit["El_actual"] = El
+            qubit["base_ex"] = base_ex
+            qubit["base_size"] = base_size
+            qubit["omega_01_actual"] = H0[1,1]-H0[0,0]
+            if len(H0) <= 2: qubit['alpha_actual'] = np.inf
+            else:            qubit["alpha_actual"] = H0[2,2]-H0[1,1] - (H0[1,1]-H0[0,0])
+        if t3: t_g = qubit["Lambdas"]/(H0[1,1]-H0[0,0])*2*np.pi
+        else: t_g = qubit["t_g"]
+        val = gate_params.Omega_eq.subs(sp.Symbol("t_g"),t_g)
+        exec(f"gate_params.Omega_amp = val")
+        #one for lambda, one for wether omega_{01} is in Omega_eq
+        
+        
         if t1 or t2:
-            H0, n_opp, phi_opp, c_ops, t_g, base_ex, base_size = qbi.init_qubit(qubit["Ec"], qubit["El"], qubit["Ej"], qubit["phi_dc"],qubit['omega_01'],qubit['alpha'], qubit["c_ops"], qubit["t_g"],truncation=qubit["truncation"], base_ex=qubit["base_ex"], base_size=qubit["base_size"])
             qubit["base_ex"] = base_ex
             qubit["base_size"] = base_size
             omega_01 = np.real(H0[1,1]- H0[0,0])

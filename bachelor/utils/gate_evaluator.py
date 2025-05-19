@@ -1,6 +1,6 @@
 import numpy as np
 import qutip as qt
-import qutip_cupy
+#import qutip_cupy
 import matplotlib.pyplot as plt
 import matplotlib._pylab_helpers as pylab_helpers
 def is_figure_active():

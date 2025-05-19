@@ -181,3 +181,5 @@ cython_debug/
 *.txt
 *.csv1
 *.pdf
+*.run
+*.pin

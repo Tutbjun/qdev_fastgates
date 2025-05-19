@@ -2,7 +2,7 @@
 
 
 import qutip as qt
-import qutip_cupy
+#import qutip_cupy
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -51,7 +51,9 @@ def init_sim(H0, H,c_ops, n_opp,phi_opp, initial_state="even"):
     for i in range(len(start_states)):
         #H = H.to('cupyd')
         #c_ops = [c.to('cupyd') for c in c_ops]
-        solvers.append(qt.MESolver(H,c_ops=c_ops, options={'store_final_state':True, 'progress_bar': None, "method": "bdf", "max_step": 2}))#, "min_step": tau/100}))
+        #solvers.append(qt.MESolver(H,c_ops=c_ops, options={'store_final_state':True, 'progress_bar': None, "method": "bdf", "max_step": 2}))#, "min_step": tau/100}))
+        s = qt.MESolver(H,c_ops=c_ops, options={'store_final_state':True, 'progress_bar': None, "method": "bdf", "max_step": 2})#, "min_step": tau/100})
+        solvers.append(qt.Propagator(s))#,c_ops=c_ops, options={'store_final_state':True, 'progress_bar': None, "method": "bdf", "max_step": 2}))#, "min_step": tau/100}))
         #print(H(0).full()-H(0).full().T.conj())
         #solvers.append(qt.MESolver(H, c_ops=[], options={'nsteps':10
                                     #args for run:
