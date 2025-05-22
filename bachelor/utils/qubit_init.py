@@ -321,14 +321,16 @@ import cupy
 import GPUtil
 import subprocess
 
-def solveEi(hamiltonian, truncation,meta=""):
+def solveEi(hamiltonian, truncation,meta="",gpu=True):
     #eigvals, eigvecs = np.linalg.eigh(hamiltonian)
     #scipy.sparse.linalg.eigs
     print(f"Solving eigvals for {meta}")
     f1,f2 = f"temp/eigvecs_{meta}.npy", f"temp/eigvals_{meta}.npy"
     #set random seed
     #get random seed from curl
-    if hamiltonian.shape[0] > 2000:
+    if hamiltonian.shape[0] <= 3000:
+        gpu = False
+    if gpu:
         result = subprocess.check_output('curl "http://www.randomnumberapi.com/api/v1.0/random?min=100&max=1000&count=5" ', shell=True, text=True)
         random.seed(result)
     def wait4gpu():
@@ -336,7 +338,7 @@ def solveEi(hamiltonian, truncation,meta=""):
         #rlocal = copy.deepcopy(random)
         random.seed(result)
         rnd = random.uniform(0, 3)
-        if hamiltonian.shape[0] > 2000:
+        if gpu:
             print(f"Waiting {rnd} seconds for GPU")
             sleep(rnd)
         gpu_availability = GPUtil.getAvailability(GPUtil.getGPUs(), maxLoad = 0.5, maxMemory = 0.5, includeNan=False, excludeID=[], excludeUUID=[])[:1]
@@ -344,7 +346,8 @@ def solveEi(hamiltonian, truncation,meta=""):
             sleep(1)
             gpu_availability = GPUtil.getAvailability(GPUtil.getGPUs(), maxLoad = 0.5, maxMemory = 0.5, includeNan=False, excludeID=[], excludeUUID=[])[:1]
         return gpu_availability
-    wait4gpu()
+    if gpu:
+        wait4gpu()
     if f1.split("/")[1] in os.listdir("temp") and f2.split("/")[1] in os.listdir("temp"):
         print("Found cached eigvals, loading...")
         loading_success = True
@@ -353,6 +356,8 @@ def solveEi(hamiltonian, truncation,meta=""):
             eigvecs, eigvals = np.load(f1), np.load(f2)
         except:
             loading_success = False
+        eigvecs = np.array(eigvecs)
+        eigvals = np.array(eigvals)
         if len(eigvecs.T) != truncation:
             loading_success = False
         if loading_success:
@@ -374,27 +379,36 @@ def solveEi(hamiltonian, truncation,meta=""):
         H_d1 = np.diag(hamiltonian,1)
         H_d2 = np.diag(hamiltonian,-1)
         H_d0 = np.diag(hamiltonian)
-    else:
+        H = scipy.sparse.diags([H_d1,H_d2,H_d0], [1,-1,0], format="csr")
+    elif gpu:
         H_d1 = hamiltonian.diagonal(1)
         H_d2 = hamiltonian.diagonal(-1)
         H_d0 = hamiltonian.diagonal()
+    else:
+        H = hamiltonian
     #H = scpy.sparse.diags([H_d1,H_d2,H_d0], [1,-1,0], format="csr")
     #solve
     #eigvals, eigvecs = scpy.sparse.linalg.eigs(H, k=truncation, which='SR', return_eigenvectors=True)
     #the above but with cupy
-    avail = wait4gpu()
-    device_id = np.argmax(avail)
-    with cupy.cuda.Device(device_id):
-        #while gpu utils says the gpu is busy, wait
-        #while GPUtil.getGPUs()[device_id].
-        print(f'Array created on GPU {device_id}')
-        H = cupyx.scipy.sparse.diags([H_d1,H_d2,H_d0], [1,-1,0], format="csr")
-        eigvals, eigvecs = eigsh(H, return_eigenvectors=True)
-        eigvals_ = cupy.asnumpy(eigvals)
-        eigvecs_ = cupy.asnumpy(eigvecs)
-        del eigvals, eigvecs, H
-        eigvals = eigvals_
-        eigvecs = eigvecs_
+    if gpu:
+        avail = wait4gpu()
+        device_id = np.argmax(avail)
+        with cupy.cuda.Device(device_id):
+            #while gpu utils says the gpu is busy, wait
+            #while GPUtil.getGPUs()[device_id].
+            print(f'Array created on GPU {device_id}')
+            H = cupyx.scipy.sparse.diags([H_d1,H_d2,H_d0], [1,-1,0], format="csr")
+            eigvals, eigvecs = eigsh(H, return_eigenvectors=True, k=truncation)
+            eigvals_ = cupy.asnumpy(eigvals)
+            eigvecs_ = cupy.asnumpy(eigvecs)
+            del eigvals, eigvecs, H
+            eigvals = eigvals_
+            eigvecs = eigvecs_
+    else:
+        eigvals, eigvecs = scipy.sparse.linalg.eigsh(H, return_eigenvectors=True, which='SR')
+        sort = np.argsort(eigvals)
+        eigvals = eigvals[sort]
+        eigvecs = eigvecs[:,sort]
  
     basisTransform = eigvecs
     mask = np.sum(eigvecs.real, axis=0) < 0
@@ -406,6 +420,21 @@ def solveEi(hamiltonian, truncation,meta=""):
                 phase = x/np.abs(x)
                 eigvecs[:,i] /= phase
                 break
+    if config["eigenvecs"]:
+        #plot
+        plt.clf()
+        plt.close('all')
+        plt.figure(figsize=(10,5))
+        cmap = plt.get_cmap('hsv')
+        for i in range(len(eigvals)):
+            plt.plot(eigvecs[:,i].real, color=cmap(i*1e-1),alpha=np.exp(-i*1e-1),zorder=100-i)
+            #plt.plot(eigvecs[:,i].imag, color=cmap(i*1e-1),alpha=np.exp(-i*1e-1),zorder=100-i)
+            if i > 4: break
+        plt.savefig("eigenvecs.png")
+        plt.show()
+        plt.clf()
+        plt.close('all')
+
     np.save(f1, eigvecs)
     np.save(f2  , eigvals)
     return eigvals, eigvecs, basisTransform
@@ -466,6 +495,7 @@ def get_diag_Hamiltonian(Ec,El,Ej,phi_dc,omega_01,alpha, base_ex=np.pi*4, base_s
         if El == None: params2opt.append("El")
         if Ej == None: params2opt.append("Ej")
         initial = np.ones(len(params2opt))
+        #initial[-1] = 10
         fixed = []
         if Ec != None: fixed.append(Ec)
         if El != None: fixed.append(El)
@@ -496,10 +526,10 @@ def get_diag_Hamiltonian(Ec,El,Ej,phi_dc,omega_01,alpha, base_ex=np.pi*4, base_s
                 indx_f += 1
             if Ec_ < 0 or El_ < 0 or Ej_ < 0:
                 return np.inf
-            H0 = get_Hamiltonian(Ec_,El_,Ej_,phi_dc,omega_01,alpha, 4*np.pi, 3000,expansion_order)
+            H0 = get_Hamiltonian(Ec_,El_,Ej_,phi_dc,omega_01,alpha, 6*np.pi, 2000,expansion_order)
             if H0 is None:
                 return np.inf
-            eigvals, _, _ = solveEi(H0,truncation,meta=f"{Ec_},{El_},{Ej_},{phi_dc},{2*np.pi},{2000},{expansion_order}")
+            eigvals, _, _ = solveEi(H0,truncation,meta=f"{Ec_},{El_},{Ej_},{phi_dc},{6*np.pi},{2000},{expansion_order}")
             omega_01_current = eigvals[1]-eigvals[0]
             alpha_current = eigvals[2]-eigvals[1] - omega_01_current
             loss = lambda o,a: np.abs(o-omega_01)**4 + np.abs(a-alpha)**2

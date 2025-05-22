@@ -184,7 +184,7 @@ class GateParams:
             omega_01s = sp.Symbol('omega_{01}')
             func = self.function
             if t0 != None: func = func.subs(t0s, t0)
-            if n != None: func = func.subs(sp.Symbol('n'), n)
+            if n != None: func = func.subs(sp.Symbol('n'), 2*n)
             func = func.subs(t_gs, t_g)
             func = func.subs(omega_01s, omega_01)
             if dt0 != None:

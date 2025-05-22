@@ -1,3 +1,4 @@
+import adaptive.learner.learner2D
 from utils import gate_evaluator as ge
 from utils import gate_simulator as gs
 from utils import param_object as po
@@ -196,8 +197,8 @@ class AdaptiveLearner:
                 qubit_names[name] = len(qubit_names)
             rpoints[i]["index"] = qubit_names[name]
             rpoints[i]["truncation"] = self.truncation
-            rpoints[i]["base_ex"] = np.pi*4
-            rpoints[i]["base_size"] = 1000
+            rpoints[i]["base_ex"] = np.pi*6
+            rpoints[i]["base_size"] = 2000
         #save the qubit names
         with open("qubit_names.pickle", "wb") as f:
             pickle.dump(qubit_names, f)
@@ -333,7 +334,10 @@ def eval_qubit(gate_params, qubit, t0_samplerate=5, calZ=False):
         H0_sim, H_sim = copy(gate_dynamics.transform_2_rotating_frame(t_g,omega_01=copy(H0[1,1]-H0[0,0]),t0=t0, n=n,dt0=dt0))
         #print(H_sim(2).full())
         #H = gate_dynamics.get_QuTiP_compile()
-        solvers, start_states = gs.init_sim(H0_sim, H_sim, c_opps, n_opp, phi_opp,initial_state="even")
+        if calZ:
+            opp_solvers, start_states = gs.init_sim(H0_sim, H_sim, c_opps, n_opp, phi_opp,initial_state="even",opp_solver=True)
+        else:
+            solvers, start_states = gs.init_sim(H0_sim, H_sim, c_opps, n_opp, phi_opp,initial_state="even",opp_solver=False)
         if "H_log.txt" in os.listdir("temp") and config["H_log"] and cnt==0: os.remove("temp/H_log.txt")
         if "H_log11.txt" in os.listdir("temp") and config["H_log"] and cnt==0: os.remove("temp/H_log11.txt")
         if "H_log.txt" in os.listdir("temp") and config["H_log"]:
@@ -341,14 +345,22 @@ def eval_qubit(gate_params, qubit, t0_samplerate=5, calZ=False):
                 f.write(f"breakpoint\n")
         if n != None:
             t0 = gate_dynamics.t_0
-            t0 = t0.subs(sp.symbols("n"), n)
+            t0 = t0.subs(sp.symbols("n"), 2*n)
             t0 = t0.subs(sp.symbols("t_g"), t_g)
             t0 = t0.subs(sp.symbols("omega_{01}"), H0[1,1]-H0[0,0])
             t0 = t0.subs(sp.symbols("dt_0"), dt0)
             t0 = t0.evalf()
-        results = gs.simulate(solvers, start_states, t0,1.1*t_g+t0)
-        for i in range(len(results)):
-            results[i].solver = f"{qubit['name']}_{gate}_t0_{t0}_i_{i}"
+        if calZ: r = gs.simulate(opp_solvers, start_states, t0,1.1*t_g+t0)
+        else:
+            #raise NotImplementedError("Do inverse of Z on initial states") 
+            U_inv = get_simple_gate([0,0,1], -gate_params.VZ_amp, baselen=len(start_states[0].full()))
+            for i in range(len(start_states)):
+                start_states[i] = U_inv*start_states[i]*U_inv.dag()
+            r = gs.simulate(solvers, start_states, t0,1.1*t_g+t0)#!edit
+        for i in range(len(r)):
+            r[i].name = f"{qubit['name']}_{gate}_t0_{t0}_i_{i}"
+        if calZ: opperators = r
+        else: results = r
         if calZ:
             """for i in range(len(results)):
                 def score_at_Zamp(Zamp):
@@ -363,27 +375,102 @@ def eval_qubit(gate_params, qubit, t0_samplerate=5, calZ=False):
                 Z_amps.append(val_best)"""
             #instead of the above, minimize the avg fidelity over all results
             def score_at_Zamp(Zamp):
-                unitary = get_simple_gate([0,0,1], Zamp, baselen=len(results[0].states[0].full()))
-                score = 0
-                for i in range(len(results)):
-                    res_clone = copy(results[i])
-                    res_clone.states[-1] = unitary*res_clone.states[-1]*unitary.dag()
-                    score += ge.evaluate([res_clone],ideal_gate,light=True)
-                return -score.real/len(results)
+                unitary = get_simple_gate([0,0,1], Zamp, baselen=2)
+                unitary_inv = get_simple_gate([0,0,1], -Zamp, baselen=2)
+                #print(unitary.full())
+                #print(unitary_inv.full())
+                #unitary = qt.spre(unitary) * qt.spost(unitary.dag())
+                #unitary_inv = qt.spre(unitary_inv) * qt.spost(unitary_inv.dag())
+                scores = []
+                for i in range(len(opperators)):
+                    opp = copy(opperators[i])
+                    U = qt.to_super(unitary)
+                    U_inv = qt.to_super(unitary_inv)
+                    opp_final = U @ opp @ U_inv
+                    ss = qt.operator_to_vector(start_states[i])
+                    fs = opp_final @ ss
+                    fs = qt.vector_to_operator(fs)
+                    scores.append(ge.evaluate_onstate([fs],[start_states[i]],ideal_gate))
+
+                    """opp = qt.Qobj(1/np.sqrt(2)*(np.eye(2,2)+1j*qt.sigmay().full()))
+                    U = unitary*opp*unitary_inv
+                    fs = U*start_states[i]*U.dag()
+                    scores.append(ge.evaluate_onstate([fs],[start_states[i]],ideal_gate))"""
+
+                    """opp = qt.Qobj(1/np.sqrt(2)*(np.eye(2,2)+1j*qt.sigmay().full()))
+                    opp = qt.to_super(opp)
+                    U = qt.to_super(unitary)
+                    U_inv = qt.to_super(unitary_inv)
+                    opp_final = U @ opp @ U_inv
+                    ss = qt.operator_to_vector(start_states[i])
+                    fs = opp_final @ ss
+                    fs = qt.vector_to_operator(fs)
+                    scores.append(ge.evaluate_onstate([fs],[start_states[i]],ideal_gate))"""
+                    #scores.append(ge.evaluate_onstate([ss3],[start_states[i]],ideal_gate))
+                a = np.log10(1-np.array(scores).real)#!edit
+                return np.mean(a)
             #minimize the score
-            r = minimize(score_at_Zamp, 0.00, bounds=[(-np.pi,np.pi)])
+            #start by trying 4
+            thetas = [0, np.pi/2, np.pi, 3*np.pi/2]
+            losses = [score_at_Zamp(theta) for theta in thetas]
+            val_best = thetas[np.argmin(losses)]
+            r = minimize(score_at_Zamp, val_best, method="Nelder-Mead")
             val_best = r.x[0]
+
             Z_amps.append(val_best)
-        results_list.append(results)
+        if calZ:
+            results_list.append(opperators)
+        else:
+            results_list.append(results)
     if calZ:
-        if len(np.unique(Z_amps)) != len(Z_amps): Z_amp_avg = np.median(Z_amps)
-        else:                                     Z_amp_avg = np.random.choice(Z_amps)
-        unit = get_simple_gate([0,0,1], Z_amp_avg, baselen=len(results[0].states[0].full()))
+        #if len(np.unique(Z_amps)) != len(Z_amps): Z_amp_avg = np.median(Z_amps)
+        #else:                                     Z_amp_avg = np.random.choice(Z_amps)
+        Z_amp_avg = np.mean(Z_amps)
+        unit = get_simple_gate([0,0,1], Z_amp_avg, baselen=2)
+        unit_inv = get_simple_gate([0,0,1], -Z_amp_avg, baselen=2)
+        #unit = qt.spre(unit) * qt.spost(unit.dag())
+        #unit_inv = qt.spre(unit_inv) * qt.spost(unit_inv.dag())
+        class ResultPacker:
+            def __init__(self, states):
+                self.states = states
         for i in range(len(results_list)):
             for j in range(len(results_list[i])):
-                results_list[i][j].states[-1] = unit*results_list[i][j].states[-1]*unit.dag()
+                opp = copy(results_list[i][j])
+                U = qt.to_super(copy(unit))
+                U_inv = qt.to_super(copy(unit_inv))
+                opp_final = U @ opp @ U_inv
+                ss = qt.operator_to_vector(copy(start_states[j]))
+                fs = opp_final @ ss
+                fs = qt.vector_to_operator(fs)
+                results_list[i][j] = ResultPacker([fs])
+                scores.append(ge.evaluate_onstate([fs],[start_states[j]],ideal_gate))
+                """ss = qt.operator_to_vector(start_states[j])
+                ss1 = unit_inv*ss
+                ss2 = results_list[i][j]*ss1
+                ss3 = unit*ss2
+                ss3 = qt.vector_to_operator(ss3)
+                results_list[i][j] = ResultPacker([ss3])"""
+                #results_list[i][j].states[-1] = unit*results_list[i][j].states[-1]*unit.dag()
         gate_params.VZ_amp = Z_amp_avg
         gate_params.VZ_amp_buffer = []
+        if config["bloch"]:
+            z = gate_params.VZ_amp
+            solvers_loc, start_states_loc = gs.init_sim(H0_sim, H_sim, c_opps, n_opp, phi_opp,initial_state="even",opp_solver=False)
+            old = copy(start_states_loc)
+            U_inv = get_simple_gate([0,0,1], -z, baselen=len(start_states[0].full()))
+            for i in range(len(start_states)):
+                start_states_loc[i] = U_inv*start_states_loc[i]*U_inv.dag()
+                #print((start_states_loc[i]-old[i]).full())
+            r = gs.simulate(solvers_loc, start_states_loc, t0,1.1*t_g+t0)
+            U = get_simple_gate([0,0,1], z, baselen=len(r[0].states[0].full()))
+            for i in range(len(r)):
+                #for j in range(len(r[i].states)):
+                #    r[i].states[j] = U*r[i].states[j]*U.dag()
+                r[i].states[0] = U*r[i].states[0]*U.dag()#making explicit the einitial transformation for visual pruporses
+                r[i].states[-1] = U*r[i].states[-1]*U.dag()#creating the last transformation for fidelity purposes
+            for i in range(len(r)):
+                ge.evaluate([r[i]],ideal_gate)
+            pass
     elif gate_params.VZ_amp != 0:
         unit = get_simple_gate([0,0,1], gate_params.VZ_amp, baselen=len(results[0].states[0].full()))
         for i in range(len(results_list)):
@@ -391,7 +478,10 @@ def eval_qubit(gate_params, qubit, t0_samplerate=5, calZ=False):
                 results_list[i][j].states[-1] = unit*results_list[i][j].states[-1]*unit.dag()
     for i in range(len(results_list)):
         results = results_list[i]
-        score = ge.evaluate(results,ideal_gate)
+        if len(results[0].states) > 1:
+            score = ge.evaluate(results,ideal_gate)
+        else:
+            score = ge.evaluate_onstate(results,start_states,ideal_gate)
         scores.append(score)
         if config["H_log"]:
             with open("temp/H_log.txt", "r") as f:
@@ -717,6 +807,9 @@ def two_param(gate_params, qubit, gate, do_VZ=False):
     #initial values
     gate_params
     initial_values = np.ones(len(keys), dtype=float)
+    bounds = []
+    scaling = []
+    periodicity = []
     for i, key in enumerate(keys):
         initial = eval(f"gate_params.{key}_amp")
         #gate_params[f"initial_{key}"]
@@ -727,14 +820,26 @@ def two_param(gate_params, qubit, gate, do_VZ=False):
             initial = initial.subs(sp.Symbol('omega_{01}'), H0[1,1]-H0[0,0])
         val = complex(initial)
         initial_values[i] = float(val.real)
+        if "Omega" in key:
+            bounds.append((0.75*val.real,1.25*val.real))
+            periodicity.append(None)
+        elif "dt0" in key:
+            periodicity.append(np.pi/qubit["omega_01_actual"])
+            bounds.append((0, periodicity[-1]))
+        else:
+            raise NotImplementedError(f"Key {key} not implemented")
+        scaling.append(np.abs(bounds[-1][1]-bounds[-1][0]))
     gates = []
     scores = []
     cord = []
     #cnt = 0
     def loss_func(vals):
         global cnt
+        #vals = np.array(vals)*np.power(scaling, 1)
         local_gate = copy(gate_params)
         for i, key in enumerate(keys):
+            if periodicity[i] != None:
+                vals[i] = np.mod(vals[i], periodicity[i])
             exec(f"local_gate.{key}_amp = vals[i]")
         score, datapoint, local_gate = eval_qubit(local_gate, qubit, t0_samplerate=3, calZ=True)
         gates.append(local_gate)
@@ -743,7 +848,7 @@ def two_param(gate_params, qubit, gate, do_VZ=False):
         if 1 > 0:
             plt.clf()
             cmap = plt.get_cmap("viridis")
-            plt.scatter(np.array(cord).T[0], np.array(cord).T[1], c=np.array(scores)+1, cmap=cmap, norm=matplotlib.colors.LogNorm())
+            plt.scatter(np.array(cord).T[0], np.array(cord).T[1], c=1+np.array(scores), cmap=cmap, norm=matplotlib.colors.LogNorm())
             #fit a polynomial landscape to the data (cord 1+2, score)
             #coeff, r, rank, s = np.linalg.lstsq(np.array(cord), np.array(scores))
             #func = lambda x,y: coeff[3]*x**2 + coeff[6]*y**2 
@@ -759,13 +864,57 @@ def two_param(gate_params, qubit, gate, do_VZ=False):
         print(f"Count: {cnt}")
         if 1-score <= 2e-6:
             raise StopIteration
-        return -score
+        return np.log10(1-score)
     #do a simple scipy minimize
     try:
         #_ = minimize(loss_func, initial_values, options={"maxiter": 20},method="Nelder-Mead")
-        _ = basinhopping(loss_func, initial_values, niter=3, T=1e-3, stepsize=initial_values[0]*0.5, minimizer_kwargs={"method": "Nelder-Mead", "options": {"maxiter": 15}}, disp=True)
+        #i_vars = np.array(initial_values)*np.power(scaling, -1)
+        #bnds = [np.array(bounds[i])*np.power(scaling[i], -1) for i in range(len(bounds))]
+        #r = basinhopping(loss_func, i_vars, niter=10, T=3, stepsize=1, minimizer_kwargs={"method": "Nelder-Mead", "options": {"maxiter": 6}, "bounds": bnds},disp=True)
+        #use an adaptive sampler wrapper for as a better basin-hopping
+        def basinfunction(x, sampler,iter=10):
+            lastlen= len(cord)
+            r = minimize(loss_func, x, method="Nelder-Mead", options={"maxiter": iter},bounds=bounds)
+            #feed points to sampler
+            for i in range(lastlen, len(cord)):
+                sampler.tell(cord[i], scores[i])
+            return sampler
+        dummy = lambda x: None
+        sampler = adaptive.Learner2D(dummy, bounds, loss_per_triangle=adaptive.learner.learner2D.areas)
+        basinfunction(initial_values, sampler,iter=30)
+        #basinfunction((0,i_vars[1]), sampler)
+        #basinfunction((bnds[0][1],i_vars[1]), sampler)
+        # sampler.bounds_are_done = True
+        def distance(pnt,cord):
+            dists = pnt - np.array(cord)
+            dists[:,0] /= np.abs(bounds[0][1]-bounds[0][0])
+            dists[:,1] /= np.abs(bounds[1][1]-bounds[1][0])
+            dists = np.linalg.norm(dists, axis=1)
+            return np.min(dists)
+        for i in range(10):
+            iter = 13
+            if i <= 1: iter = 1
+            #pnt = sampler.ask(1)
+            pnt = (np.random.uniform(bounds[0][0], bounds[0][1]), np.random.uniform(bounds[1][0], bounds[1][1]))
+            lim = 0.5
+            counter = 0
+            while distance(pnt,cord)<lim:
+                pnt = (np.random.uniform(bounds[0][0], bounds[0][1]), np.random.uniform(bounds[1][0], bounds[1][1]))
+                counter += 1
+                if counter > 100:
+                    lim *= 0.8
+                    counter = 0
+            sampler = basinfunction(pnt, sampler, iter=iter)
+        best = np.argmin(scores)
+        best_val = np.array(cord)[best]
+        best_score = scores[best]
+        _ = minimize(loss_func, best_val, options={"maxiter": 30},method="Nelder-Mead")
+        best = np.argmin(scores)
+        best_val = np.array(cord)[best]
+        best_score = scores[best]
     except StopIteration:
         print("Target fidelity reached")
+
     """final = result.x
     for i, key in enumerate(keys):
         exec(f"gate_params.{key}_amp = final[i]")"""
@@ -926,3 +1075,36 @@ def calib_gate(args):
             val = gate_params.Omega_eq.subs(sp.Symbol("omega_{01}"),omega_01).subs(sp.Symbol("t_g"),qubit["t_g"])
             exec(f"gate_params.Omega_amp = val")
     return qubit, gate_params
+
+from numpy.linalg import lstsq
+def get_opp_from_densities(rho1_set,rho2_set):
+    """
+    Solves rho2 = K * rho1 * K† for K over sets of rho1 and rho2.
+    Assumes 2x2 density matrices.
+    Returns least-squares approximate K.
+    """
+    A_list = []
+    b_list = []
+    
+    for rho1, rho2 in zip(rho1_set, rho2_set):
+        # Vectorize rho1 and rho2
+        a = rho1.flatten()
+        b = rho2.flatten()
+        
+        # Build Kronecker product matrix for this pair
+        M = np.kron(a.conj().T, np.eye(2))
+        
+        A_list.append(M)
+        b_list.append(b)
+    
+    # Stack matrices
+    A = np.vstack(A_list)
+    b = np.concatenate(b_list)
+    
+    # Solve least-squares for vec(K)
+    K_vec, residuals, rank, s = lstsq(A, b, rcond=None)
+    
+    # Reshape back to 2x2
+    K = K_vec.reshape(2, 2)
+    
+    return K

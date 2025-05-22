@@ -110,3 +110,64 @@ def evaluate(results,ideal_gate,light=False):#!validate
         propabilities.append(fidelity)
     fidelity = np.sum(propabilities)/len(propabilities)
     return fidelity
+
+def evaluate_onstate(final_states,initial_states,ideal_gate):#!validate
+    """
+    Do a qutip simulation, where the inverse of the ideal gate is used to run the simulation back. Then take the amplitude |initial> in the final state
+    """
+    
+
+    #print(results)
+    propabilities = []
+    #expand the basis
+    if hasattr(final_states[0],"states"):
+        final_states = [state.states[-1] for state in final_states]
+    base_len = len(final_states[0].full())
+    ideal_gate_inverse = np.eye(base_len,base_len,dtype=complex)
+    ideal_gate_inverse[:2,:2] = np.array(ideal_gate).conj().T
+
+    sx_,sy_,sz_ = qt.sigmax(),qt.sigmay(),qt.sigmaz()
+    #sx, sy, sz = np.eye(base_len,dtype=complex), np.eye(base_len,dtype=complex), np.eye(base_len,dtype=complex)
+    sx, sy, sz = np.zeros((base_len,base_len),dtype=complex), np.zeros((base_len,base_len),dtype=complex), np.zeros((base_len,base_len),dtype=complex)
+    sx[:2,:2], sy[:2,:2], sz[:2,:2] = sx_.full(), sy_.full(), sz_.full()
+
+
+
+    for fstate, istate in zip(final_states,initial_states):
+        #plot states on bloch sphere
+        #initial_state = states.states[0]
+        final_state = fstate
+        final_state = np.dot(np.dot(ideal_gate_inverse,final_state.full()),ideal_gate_inverse.T.conj())
+        final_state = qt.Qobj(final_state)
+        #nextlast_state = sate.states[-2]
+        #print((final_state-result.states[-2]).full())
+        
+
+
+
+        
+        #find which opperator the initial state is an eigenvector of
+        inits = qt.Qobj(istate.full())
+        truth = inits.isherm and np.isclose(inits.tr(),1) and np.isclose((inits*inits).tr(),1)
+        if not truth:
+            print("The initial state is not a pure state!")
+        #print("Trace: ",final_state.tr())
+        #print(final_state.full())
+        eigvals,eigkets = istate.eigenstates()
+        eigkets,eigvals = [eigket.full() for i,eigket in enumerate(eigkets) if np.isclose(eigvals[i],1)], [eigval for eigval in eigvals if np.isclose(eigval,1)] 
+        initial_pure,eigval = eigkets[0],eigvals[0]#!incompatible eigvals
+        #print(initial_pure)
+        initial_type = None
+        fs = final_state.full()
+        A = np.dot(initial_pure,initial_pure.conj().T)
+        #print(A)
+        metric = np.dot(fs,A)
+        fidelity = np.trace(metric)
+        #fidelity = np.sum([initial_pure[i].conj()*initial_pure[i]*final_state.full()[i,i] for i in range(len(initial_pure))])
+        #print("Pure_state: ",initial_pure[:2])
+        #print("Fidelity: ",fidelity)
+        #prob = np.trace(np.dot(initial_state.full().T.conj(),final_state.full()))#!why are expectation values complex?
+        #!why are expectation values complex?
+        propabilities.append(fidelity)
+    fidelity = np.sum(propabilities)/len(propabilities)
+    return fidelity

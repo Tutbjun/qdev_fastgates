@@ -167,7 +167,7 @@ def get_gate_params(gate="demo"):
         #Pi*(-a^2*omega^2 + Pi^2)*omega/(-2*a^3*omega^3 + 2*Pi^2*a*omega + 2*Pi^2*sin(omega*a))
         theta_a = 0
         theta_b = 0#from resonant pulse condition
-        dt_0_init = -0.5*sp.Symbol('t_g')
+        dt_0_init = -0.5*sp.Symbol('t_g')#!temp
         dt_0 = sp.Symbol('dt_0')
         t_g = sp.Symbol('t_g')
         #varphi = 0
@@ -222,8 +222,10 @@ def get_gate_params(gate="demo"):
             "ideal": [[1/np.sqrt(2),-1j/np.sqrt(2)],[-1j/np.sqrt(2),1/np.sqrt(2)]],#x gate
             "t_g": t_g,
             "c_ops": [
-                np.array([[0,158],[0,0]]),
-                np.array([[0,1],[0,0]])
+                #np.array([[0,158],[0,0]]),
+                np.array([[0,0],[0,0]]),
+                #np.array([[0,1],[0,0]])
+                np.array([[0,0],[0,0]])
             ]
         })
     elif "FAST-MAGNUS" in gate:
