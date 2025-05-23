@@ -43,6 +43,9 @@ def evaluate(results,ideal_gate,light=False):#!validate
 
             
             ax=[0,0]
+            plt.show()
+            plt.clf()
+            plt.close('all')
             if not is_figure_active():
                 fig = plt.figure()
                 ax[0] = fig.add_subplot(121, projection='3d')

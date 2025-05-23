@@ -317,7 +317,7 @@ def eval_qubit(gate_params, qubit, t0_samplerate=5, calZ=False):
     scores = []
     Z_amps = []
     results_list = []
-    for cnt,t0 in enumerate(loop):
+    for cnt,t0 in enumerate(loop):#for each probing t0
         if gate_params.known_t0: 
             n = t0
             dt0 = gate_params.dt0_amp
@@ -334,6 +334,7 @@ def eval_qubit(gate_params, qubit, t0_samplerate=5, calZ=False):
         H0_sim, H_sim = copy(gate_dynamics.transform_2_rotating_frame(t_g,omega_01=copy(H0[1,1]-H0[0,0]),t0=t0, n=n,dt0=dt0))
         #print(H_sim(2).full())
         #H = gate_dynamics.get_QuTiP_compile()
+        #either opp-type or state-type solver
         if calZ:
             opp_solvers, start_states = gs.init_sim(H0_sim, H_sim, c_opps, n_opp, phi_opp,initial_state="even",opp_solver=True)
         else:
@@ -350,18 +351,34 @@ def eval_qubit(gate_params, qubit, t0_samplerate=5, calZ=False):
             t0 = t0.subs(sp.symbols("omega_{01}"), H0[1,1]-H0[0,0])
             t0 = t0.subs(sp.symbols("dt_0"), dt0)
             t0 = t0.evalf()
-        if calZ: r = gs.simulate(opp_solvers, start_states, t0,1.1*t_g+t0)
-        else:
-            #raise NotImplementedError("Do inverse of Z on initial states") 
-            U_inv = get_simple_gate([0,0,1], -gate_params.VZ_amp, baselen=len(start_states[0].full()))
-            for i in range(len(start_states)):
-                start_states[i] = U_inv*start_states[i]*U_inv.dag()
-            r = gs.simulate(solvers, start_states, t0,1.1*t_g+t0)#!edit
+        #run solver
+        if calZ: #to find opps for Z-opt
+            r = gs.simulate(opp_solvers, start_states, t0,1.1*t_g+t0)
+        else:#using the state solver and already found Z
+            #raise NotImplementedError("Do inverse of Z on initial states")
+            if not np.all(gate_params.VZ_amp == 0):
+                z_d = gate_params.VZ_amp[0] 
+                z_s = gate_params.VZ_amp[1]
+                U_d_inv = get_simple_gate([0,0,1], -z_d, baselen=len(start_states[0].full()))
+                ss_local = []
+                for i in range(len(start_states)):
+                    ss = U_d_inv*start_states[i]*U_d_inv.dag()
+                    ss_local.append(ss)
+                r = gs.simulate(solvers, ss_local, t0,1.1*t_g+t0)#!edit
+                U_d = get_simple_gate([0,0,1], z_d, baselen=len(start_states[0].full()))
+                U_s = get_simple_gate([0,0,1], z_s, baselen=len(start_states[0].full()))
+                for i in range(len(r)):
+                    r[i].states[0] = U_d*r[i].states[0]*U_d.dag()
+                    r[i].states[-1] = U_s*r[i].states[-1]*U_s.dag()
+                    r[i].states[-1] = U_d*r[i].states[-1]*U_d.dag()
+            else:
+                r = gs.simulate(solvers, start_states, t0,1.1*t_g+t0)
+        #store
         for i in range(len(r)):
             r[i].name = f"{qubit['name']}_{gate}_t0_{t0}_i_{i}"
         if calZ: opperators = r
         else: results = r
-        if calZ:
+        if calZ:#optimize Z-amps
             """for i in range(len(results)):
                 def score_at_Zamp(Zamp):
                     unitary = get_simple_gate([0,0,1], Zamp, baselen=len(results[i].states[0].full()))
@@ -374,19 +391,27 @@ def eval_qubit(gate_params, qubit, t0_samplerate=5, calZ=False):
                 val_best = r.x[0]   
                 Z_amps.append(val_best)"""
             #instead of the above, minimize the avg fidelity over all results
-            def score_at_Zamp(Zamp):
-                unitary = get_simple_gate([0,0,1], Zamp, baselen=2)
-                unitary_inv = get_simple_gate([0,0,1], -Zamp, baselen=2)
+            a_s = []
+            theta_cords = []
+            def score_at_Zamp(Zamps):
+                Z_double = Zamps[0]
+                Z_single = Zamps[1]
+                unitary_d = get_simple_gate([0,0,1], Z_double, baselen=len(start_states[0].full()))
+                unitary_d_inv = get_simple_gate([0,0,1], -Z_double, baselen=len(start_states[0].full()))
+                unitary_s = get_simple_gate([0,0,1], Z_single, baselen=len(start_states[0].full()))
                 #print(unitary.full())
                 #print(unitary_inv.full())
                 #unitary = qt.spre(unitary) * qt.spost(unitary.dag())
                 #unitary_inv = qt.spre(unitary_inv) * qt.spost(unitary_inv.dag())
                 scores = []
+                
                 for i in range(len(opperators)):
                     opp = copy(opperators[i])
-                    U = qt.to_super(unitary)
-                    U_inv = qt.to_super(unitary_inv)
-                    opp_final = U @ opp @ U_inv
+                    U_d = qt.to_super(unitary_d)
+                    U_d_inv = qt.to_super(unitary_d_inv)
+                    U_s = qt.to_super(unitary_s)
+                    opp_final = U_d @ U_s @ opp @ U_d_inv
+                    #opp_final = U @ opp @ U_inv
                     ss = qt.operator_to_vector(start_states[i])
                     fs = opp_final @ ss
                     fs = qt.vector_to_operator(fs)
@@ -407,27 +432,51 @@ def eval_qubit(gate_params, qubit, t0_samplerate=5, calZ=False):
                     fs = qt.vector_to_operator(fs)
                     scores.append(ge.evaluate_onstate([fs],[start_states[i]],ideal_gate))"""
                     #scores.append(ge.evaluate_onstate([ss3],[start_states[i]],ideal_gate))
-                a = np.log10(1-np.array(scores).real)#!edit
-                return np.mean(a)
+                a = np.log10(1-np.mean(scores).real)#!edit
+                theta_cords.append(Zamps)
+                a_s.append(a)  
+                #plot
+                if False and np.random.uniform() < 0.1:
+                    plt.clf()
+                    plt.scatter(np.array(theta_cords)[:,0], np.array(theta_cords)[:,1], c=a_s)
+                    plt.colorbar()
+                    plt.xlabel("Z_double")
+                    plt.ylabel("Z_single")
+                    plt.title(f"Fidelity for {qubit['name']} with {gate} at t0 = {t0}")
+                    plt.savefig(f"temp/{qubit['name']}_{gate}_t0_{t0}.png")
+                    plt.savefig(f"temp/zamps.png")
+                    plt.show()
+                    plt.close()
+                    plt.close('all')
+                    plt.clf()
+                if a <= -7:
+                    raise StopIteration("Target fidelity reached")
+                return a
             #minimize the score
             #start by trying 4
-            thetas = [0, np.pi/2, np.pi, 3*np.pi/2]
-            losses = [score_at_Zamp(theta) for theta in thetas]
-            val_best = thetas[np.argmin(losses)]
-            r = minimize(score_at_Zamp, val_best, method="Nelder-Mead")
-            val_best = r.x[0]
+            #thetas = [0, np.pi/2, np.pi, 3*np.pi/2]
+            #losses = [score_at_Zamp(theta) for theta in thetas]
+            #val_best = thetas[np.argmin(losses)]
+            try:
+                r = minimize(score_at_Zamp, (0,0), method="Nelder-Mead")
+                val_best = r.x
+            except StopIteration as e:
+                print(e)
+                indx_best = np.argmin(a_s)
+                val_best = theta_cords[indx_best]
 
             Z_amps.append(val_best)
         if calZ:
             results_list.append(opperators)
         else:
             results_list.append(results)
-    if calZ:
-        #if len(np.unique(Z_amps)) != len(Z_amps): Z_amp_avg = np.median(Z_amps)
-        #else:                                     Z_amp_avg = np.random.choice(Z_amps)
-        Z_amp_avg = np.mean(Z_amps)
-        unit = get_simple_gate([0,0,1], Z_amp_avg, baselen=2)
-        unit_inv = get_simple_gate([0,0,1], -Z_amp_avg, baselen=2)
+    if calZ:#pick best Z and apply (across t0's)
+        Z_amp_avg = np.mean(Z_amps,axis=0)
+        z_d = Z_amp_avg[0]
+        z_s = Z_amp_avg[1]
+        unit_d = get_simple_gate([0,0,1], z_d, baselen=len(start_states[0].full()))
+        unit_d_inv = get_simple_gate([0,0,1], -z_d, baselen=len(start_states[0].full()))
+        unit_s = get_simple_gate([0,0,1], z_s, baselen=len(start_states[0].full()))
         #unit = qt.spre(unit) * qt.spost(unit.dag())
         #unit_inv = qt.spre(unit_inv) * qt.spost(unit_inv.dag())
         class ResultPacker:
@@ -436,9 +485,10 @@ def eval_qubit(gate_params, qubit, t0_samplerate=5, calZ=False):
         for i in range(len(results_list)):
             for j in range(len(results_list[i])):
                 opp = copy(results_list[i][j])
-                U = qt.to_super(copy(unit))
-                U_inv = qt.to_super(copy(unit_inv))
-                opp_final = U @ opp @ U_inv
+                U_d = qt.to_super(copy(unit_d))
+                U_d_inv = qt.to_super(copy(unit_d_inv))
+                U_s = qt.to_super(copy(unit_s))
+                opp_final = U_d @ U_s @ opp @ U_d_inv
                 ss = qt.operator_to_vector(copy(start_states[j]))
                 fs = opp_final @ ss
                 fs = qt.vector_to_operator(fs)
@@ -453,32 +503,36 @@ def eval_qubit(gate_params, qubit, t0_samplerate=5, calZ=False):
                 #results_list[i][j].states[-1] = unit*results_list[i][j].states[-1]*unit.dag()
         gate_params.VZ_amp = Z_amp_avg
         gate_params.VZ_amp_buffer = []
-        if config["bloch"]:
-            z = gate_params.VZ_amp
+        if config["bloch"] and False:
+            z_d = gate_params.VZ_amp[0]
+            z_s = gate_params.VZ_amp[1]
             solvers_loc, start_states_loc = gs.init_sim(H0_sim, H_sim, c_opps, n_opp, phi_opp,initial_state="even",opp_solver=False)
             old = copy(start_states_loc)
-            U_inv = get_simple_gate([0,0,1], -z, baselen=len(start_states[0].full()))
+            U_d_inv = get_simple_gate([0,0,1], -z_d, baselen=len(start_states[0].full()))
             for i in range(len(start_states)):
-                start_states_loc[i] = U_inv*start_states_loc[i]*U_inv.dag()
+                start_states_loc[i] = U_d_inv*start_states_loc[i]*U_d_inv.dag()
                 #print((start_states_loc[i]-old[i]).full())
             r = gs.simulate(solvers_loc, start_states_loc, t0,1.1*t_g+t0)
-            U = get_simple_gate([0,0,1], z, baselen=len(r[0].states[0].full()))
+            U_s = get_simple_gate([0,0,1], z_s, baselen=len(r[0].states[0].full()))
+            U_d = get_simple_gate([0,0,1], z_d, baselen=len(r[0].states[0].full()))
             for i in range(len(r)):
                 #for j in range(len(r[i].states)):
                 #    r[i].states[j] = U*r[i].states[j]*U.dag()
-                r[i].states[0] = U*r[i].states[0]*U.dag()#making explicit the einitial transformation for visual pruporses
-                r[i].states[-1] = U*r[i].states[-1]*U.dag()#creating the last transformation for fidelity purposes
+                r[i].states[0] = U_d*r[i].states[0]*U_d.dag()#making explicit the einitial transformation for visual pruporses
+                r[i].states[-1] = U_s*r[i].states[-1]*U_s.dag()#creating the last transformation for fidelity purposes
+                r[i].states[-1] = U_d*r[i].states[-1]*U_d.dag()#creating the last transformation for fidelity purposes
             for i in range(len(r)):
                 ge.evaluate([r[i]],ideal_gate)
             pass
-    elif gate_params.VZ_amp != 0:
+    """elif gate_params.VZ_amp != 0:
+        
         unit = get_simple_gate([0,0,1], gate_params.VZ_amp, baselen=len(results[0].states[0].full()))
         for i in range(len(results_list)):
             for j in range(len(results_list[i])):
-                results_list[i][j].states[-1] = unit*results_list[i][j].states[-1]*unit.dag()
+                results_list[i][j].states[-1] = unit*results_list[i][j].states[-1]*unit.dag()"""
     for i in range(len(results_list)):
         results = results_list[i]
-        if len(results[0].states) > 1:
+        if len(results[0].states) > 1:#wether only one state or full states is present
             score = ge.evaluate(results,ideal_gate)
         else:
             score = ge.evaluate_onstate(results,start_states,ideal_gate)
@@ -604,7 +658,7 @@ def single_param(gate_params, qubit, gate, do_VZ=False):
                 #create a new matrix
                 
                 #do the calibration
-                H0, n_opp, phi_opp, c_ops, t_g, base_ex, base_size, Ec, El, Ej = qbi.init_qubit(qubit["Ec"], qubit["El"], qubit["Ej"], qubit["phi_dc"],qubit['omega_01_target'],qubit['alpha_target'], qubit["c_ops"], qubit["Lambdas"],truncation=qubit["truncation"], base_ex=qubit["base_ex"], base_size=qubit["base_size"])
+                H0, n_opp, phi_opp, c_ops, t_g, base_ex, base_size, Ec, El, Ej = qbi.init_qubit(qubit["Ec"], qubit["El"], qubit["Ej"], qubit["phi_dc"],qubit['omega_01_target'],qubit['alpha_target'], qubit["c_ops"], qubit["Lambdas"],truncation=qubit["truncation"], base_ex=qubit["base_ex"], base_size=qubit["base_size"],Ec_IC=qubit["Ec_IC"],El_IC=qubit["El_IC"],Ej_IC=qubit["Ej_IC"])
                 qubit["base_ex"] = base_ex
                 qubit["base_size"] = base_size
                 if H0 is None:
@@ -775,7 +829,7 @@ def two_param(gate_params, qubit, gate, do_VZ=False):
             #create a new matrix
             
     #do the calibration
-    H0, n_opp, phi_opp, c_ops, t_g, base_ex, base_size, Ec, El, Ej = qbi.init_qubit(qubit["Ec"], qubit["El"], qubit["Ej"], qubit["phi_dc"],qubit['omega_01_target'],qubit['alpha_target'], qubit["c_ops"], qubit["Lambdas"], truncation=qubit["truncation"], base_ex=qubit["base_ex"], base_size=qubit["base_size"])
+    H0, n_opp, phi_opp, c_ops, t_g, base_ex, base_size, Ec, El, Ej = qbi.init_qubit(qubit["Ec"], qubit["El"], qubit["Ej"], qubit["phi_dc"],qubit['omega_01_target'],qubit['alpha_target'], qubit["c_ops"], qubit["Lambdas"], truncation=qubit["truncation"], base_ex=qubit["base_ex"], base_size=qubit["base_size"],Ec_IC=qubit["Ec_IC"],El_IC=qubit["El_IC"],Ej_IC=qubit["Ej_IC"])
     qubit["base_ex"] = base_ex
     qubit["base_size"] = base_size
     if H0 is None:
@@ -845,7 +899,7 @@ def two_param(gate_params, qubit, gate, do_VZ=False):
         gates.append(local_gate)
         scores.append(-score)
         cord.append(vals)
-        if 1 > 0:
+        if 1 < 0:
             plt.clf()
             cmap = plt.get_cmap("viridis")
             plt.scatter(np.array(cord).T[0], np.array(cord).T[1], c=1+np.array(scores), cmap=cmap, norm=matplotlib.colors.LogNorm())
@@ -1006,7 +1060,7 @@ class Adaptive_1D_Custom():
         self.tell(point[0][0], score)
 
 def do_test(qubit,gate_params):
-    H0, n_opp, phi_opp, c_ops, t_g, base_ex, base_size, Ec, El, Ej = qbi.init_qubit(qubit["Ec_actual"], qubit["El_actual"], qubit["Ej_actual"], qubit["phi_dc"],qubit['omega_01_target'],qubit['alpha_target'], qubit["c_ops"], qubit["Lambdas"],truncation=qubit["truncation"], base_ex=qubit["base_ex"], base_size=qubit["base_size"],optimizebasis=False)
+    H0, n_opp, phi_opp, c_ops, t_g, base_ex, base_size, Ec, El, Ej = qbi.init_qubit(qubit["Ec_actual"], qubit["El_actual"], qubit["Ej_actual"], qubit["phi_dc"],qubit['omega_01_target'],qubit['alpha_target'], qubit["c_ops"], qubit["Lambdas"],truncation=qubit["truncation"], base_ex=qubit["base_ex"], base_size=qubit["base_size"],optimizebasis=False,Ec_IC=qubit["Ec_IC"],El_IC=qubit["El_IC"],Ej_IC=qubit["Ej_IC"])
     qubit["base_ex"] = base_ex
     qubit["base_size"] = base_size
     if H0 is None:
@@ -1048,7 +1102,7 @@ def calib_gate(args):
         t2 = sp.Symbol("omega_{01}") in gate_params.Omega_eq.free_symbols
         t3 = "t_g" not in qubit.keys()
         if t1 or t2 or t3:
-            H0, n_opp, phi_opp, c_ops, t_g, base_ex, base_size, Ec, El, Ej = qbi.init_qubit(qubit["Ec"], qubit["El"], qubit["Ej"], qubit["phi_dc"],qubit['omega_01_target'],qubit['alpha_target'], qubit["c_ops"], qubit["Lambdas"],truncation=qubit["truncation"], base_ex=qubit["base_ex"], base_size=qubit["base_size"])
+            H0, n_opp, phi_opp, c_ops, t_g, base_ex, base_size, Ec, El, Ej = qbi.init_qubit(qubit["Ec"], qubit["El"], qubit["Ej"], qubit["phi_dc"],qubit['omega_01_target'],qubit['alpha_target'], qubit["c_ops"], qubit["Lambdas"],truncation=qubit["truncation"], base_ex=qubit["base_ex"], base_size=qubit["base_size"],Ec_IC=qubit["Ec_IC"],El_IC=qubit["El_IC"],Ej_IC=qubit["Ej_IC"])
             qubit["Ej_actual"] = Ej
             qubit["Ec_actual"] = Ec
             qubit["El_actual"] = El

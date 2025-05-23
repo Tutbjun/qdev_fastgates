@@ -440,7 +440,8 @@ def solveEi(hamiltonian, truncation,meta="",gpu=True):
     return eigvals, eigvecs, basisTransform
 
 import matplotlib
-def get_diag_Hamiltonian(Ec,El,Ej,phi_dc,omega_01,alpha, base_ex=np.pi*4, base_size=500,expansion_order=10,truncation=5,periodic=False,optim=True):
+import pathlib
+def get_diag_Hamiltonian(Ec,El,Ej,phi_dc,omega_01,alpha, base_ex=np.pi*4, base_size=500,expansion_order=10,truncation=5,periodic=False,optim=True, Ec_IC=None, El_IC=None, Ej_IC=None):
     #eigvals_landscape = []
     gradient = [np.inf,np.inf]#what to gain from varying the specific variables
     vary_mode = 0
@@ -495,6 +496,17 @@ def get_diag_Hamiltonian(Ec,El,Ej,phi_dc,omega_01,alpha, base_ex=np.pi*4, base_s
         if El == None: params2opt.append("El")
         if Ej == None: params2opt.append("Ej")
         initial = np.ones(len(params2opt))
+        idx = 0
+        if Ec_IC != None and Ec == None: 
+            initial[idx] = Ec_IC
+            idx += 1
+        if El_IC != None and El == None:
+            initial[idx] = El_IC
+            idx += 1
+        if Ej_IC != None and Ej == None:
+            initial[idx] = Ej_IC
+            idx += 1
+
         #initial[-1] = 10
         fixed = []
         if Ec != None: fixed.append(Ec)
@@ -558,18 +570,26 @@ def get_diag_Hamiltonian(Ec,El,Ej,phi_dc,omega_01,alpha, base_ex=np.pi*4, base_s
         #optimize
         from scipy.optimize import minimize
         import pickle
-        meta_name = f"{Ec},{El},{Ej},{phi_dc},{omega_01},{alpha},{base_ex},{base_size},{expansion_order}"
+        meta_name = f"qubitoptimm_{Ec},{El},{Ej},{phi_dc},{omega_01},{alpha},{base_ex},{base_size},{expansion_order}"
         print(f"Optimizing {meta_name}")
         if os.path.exists(f"temp/{meta_name}.pickle"):
             print("Found cached optimization, loading...")
+            while os.path.exists(f"temp/{meta_name}.dummy"):
+                print("Waiting for other process to finish...")
+                sleep(1)
             with open(f"temp/{meta_name}.pickle", "rb") as f:
                 result = pickle.load(f)
                 print("Loaded")
         else:
-            result = minimize(task, initial, method='Nelder-Mead', options={'xatol': 10e-2, 'disp': True})
+            pathlib.Path(f"temp/{meta_name}.dummy").touch()
+            result = minimize(task, initial, method='Nelder-Mead', options={'disp': True, 'xatol': 1e-2})
             with open(f"temp/{meta_name}.pickle", "wb") as f:
                 pickle.dump(result, f)
                 print("Saved")
+            try:
+                os.remove(f"temp/{meta_name}.dummy")
+            except FileNotFoundError:
+                pass
         r = result.x
         indx = 0
         if "Ec" in params2opt:
@@ -648,7 +668,7 @@ def get_diag_Hamiltonian(Ec,El,Ej,phi_dc,omega_01,alpha, base_ex=np.pi*4, base_s
 from matplotlib import pyplot as plt
 from matplotlib import colors
 
-def init_qubit(Ec,El,Ej,phi_dc,omega_01,alpha,c_ops,Lambdas, base_ex=np.pi*4, base_size=1001,expansion_order=50, truncation=20,optimizebasis=True):
+def init_qubit(Ec,El,Ej,phi_dc,omega_01,alpha,c_ops,Lambdas, base_ex=np.pi*4, base_size=1001,expansion_order=50, truncation=20,optimizebasis=True,Ec_IC=None, El_IC=None, Ej_IC=None):
     global H0
     global n_opp
     global phi_opp
@@ -663,7 +683,7 @@ def init_qubit(Ec,El,Ej,phi_dc,omega_01,alpha,c_ops,Lambdas, base_ex=np.pi*4, ba
         c_ops[i] = np.zeros((truncation,truncation),dtype=np.complex128)
         c_ops[i][:len(c_ops_tmp),:len(c_ops_tmp)] = c_ops_tmp
 
-    H0_diag, eigenvecs, basisTransform, eigenvals, new_ex, new_size, Ec, El, Ej = get_diag_Hamiltonian(Ec,El,Ej,phi_dc,omega_01,alpha, base_ex, base_size,expansion_order, truncation=truncation,periodic=periodic,optim=optimizebasis)
+    H0_diag, eigenvecs, basisTransform, eigenvals, new_ex, new_size, Ec, El, Ej = get_diag_Hamiltonian(Ec,El,Ej,phi_dc,omega_01,alpha, base_ex, base_size,expansion_order, truncation=truncation,periodic=periodic,optim=optimizebasis,Ec_IC=Ec_IC, El_IC=El_IC, Ej_IC=Ej_IC)
     t_g = Lambdas/(H0_diag[1,1]-H0_diag[0,0])*2*np.pi
     base_ex = new_ex
     base_size = new_size
